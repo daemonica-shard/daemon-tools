@@ -1,0 +1,81 @@
+name: Build (Unity)
+
+# Reusable workflow — called by a thin wrapper in each game repo.
+# Phase-1 scope: GameCI activation + GameBuilder build, output uploaded as an artifact.
+# fastlane delivery (TestFlight / Play) is layered on in a later increment.
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: 'Android | iOS'
+        type: string
+        default: Android
+      config:
+        description: 'Debug | Prod | Release'
+        type: string
+        default: Debug
+      unity-version:
+        description: 'Unity version (blank = auto-detect from ProjectVersion.txt)'
+        type: string
+        default: ''
+      project-path:
+        description: 'Path to the Unity project within the repo'
+        type: string
+        default: '.'
+      build-version:
+        description: 'bundleVersion to stamp (blank = leave whatever the project has)'
+        type: string
+        default: ''
+    secrets:
+      UNITY_LICENSE:
+        required: true
+      UNITY_EMAIL:
+        required: true
+      UNITY_PASSWORD:
+        required: true
+
+jobs:
+  build:
+    name: ${{ inputs.platform }} ${{ inputs.config }}
+    runs-on: ${{ inputs.platform == 'iOS' && 'macos-latest' || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout (with TEL submodule + LFS)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Cache Library/
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: Library-${{ inputs.platform }}-${{ hashFiles(format('{0}/Assets/**', inputs.project-path), format('{0}/Packages/**', inputs.project-path), format('{0}/ProjectSettings/**', inputs.project-path)) }}
+          restore-keys: |
+            Library-${{ inputs.platform }}-
+            Library-
+
+      - name: Build (GameCI)
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ inputs.project-path }}
+          unityVersion: ${{ inputs.unity-version || 'auto' }}
+          targetPlatform: ${{ inputs.platform }}
+          allowDirtyBuild: true
+          buildMethod: TapEmpire.Build.GameBuilder.BuildFromCommandLine
+          customParameters: >-
+            -buildConfig ${{ inputs.config }}
+            -platform ${{ inputs.platform }}
+            -buildNumber ${{ github.run_number }}
+            ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
+          path: ${{ inputs.project-path }}/Builds
+          if-no-files-found: error

@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets — NEVER commit (this repo is PUBLIC)
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.mobileprovision
+*.keystore
+*.ulf
+*.alf
+**/service-account*.json
+**/credentials*.json
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

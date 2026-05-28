@@ -79,7 +79,10 @@ jobs:
           targetPlatform: ${{ inputs.platform }}
           allowDirtyBuild: true
           buildMethod: TapEmpire.Build.GameBuilder.BuildFromCommandLine
+          # -disable-assembly-updater: skip Unity's API Updater, which times out on a cold
+          # Library when importing many precompiled DLLs (Odin/Firebase/etc.) on slow CI CPUs.
           customParameters: >-
+            -disable-assembly-updater
             -buildConfig ${{ inputs.config }}
             -platform ${{ inputs.platform }}
             -buildNumber ${{ github.run_number }}

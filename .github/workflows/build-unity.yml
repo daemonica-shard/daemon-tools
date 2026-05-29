@@ -71,8 +71,9 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Cache Library/
-        uses: actions/cache@v5
+      - name: Restore Library/ cache
+        id: cache-library
+        uses: actions/cache/restore@v5
         with:
           path: ${{ inputs.project-path }}/Library
           key: Library-${{ inputs.platform }}-${{ hashFiles(format('{0}/Assets/**', inputs.project-path), format('{0}/Packages/**', inputs.project-path), format('{0}/ProjectSettings/**', inputs.project-path)) }}
@@ -117,6 +118,14 @@ jobs:
             -buildNumber ${{ github.run_number }}
             ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
             ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
+
+      # Save Library/ even on failure — it's complete before Gradle, so this warms the next run.
+      - name: Save Library/ cache
+        if: always() && steps.cache-library.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: ${{ steps.cache-library.outputs.cache-primary-key }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5

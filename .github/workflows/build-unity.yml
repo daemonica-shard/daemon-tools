@@ -34,6 +34,15 @@ on:
         required: true
       UNITY_PASSWORD:
         required: true
+      # Android signing — shared keystore for all configs. Required for Android builds.
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASS:
+        required: false
+      ANDROID_KEYALIAS_NAME:
+        required: false
+      ANDROID_KEYALIAS_PASS:
+        required: false
 
 jobs:
   build:
@@ -78,6 +87,12 @@ jobs:
           unityVersion: ${{ inputs.unity-version || 'auto' }}
           targetPlatform: ${{ inputs.platform }}
           allowDirtyBuild: true
+          # Android signing: GameCI decodes the keystore + sets env vars; GameBuilder applies them.
+          androidKeystoreName: user.keystore
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
           buildMethod: TapEmpire.Build.GameBuilder.BuildFromCommandLine
           # -disable-assembly-updater: skip Unity's API Updater, which times out on a cold
           # Library when importing many precompiled DLLs (Odin/Firebase/etc.) on slow CI CPUs.

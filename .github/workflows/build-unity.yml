@@ -27,6 +27,10 @@ on:
         description: 'bundleVersion to stamp (blank = leave whatever the project has)'
         type: string
         default: ''
+      gradle-version:
+        description: 'Custom Gradle to download + point Unity at, e.g. 8.7 (blank = Unity bundled Gradle)'
+        type: string
+        default: ''
     secrets:
       UNITY_LICENSE:
         required: true
@@ -76,6 +80,16 @@ jobs:
             Library-${{ inputs.platform }}-
             Library-
 
+      # Opt-in per project: a wrapper that sets `gradle-version` (e.g. WordGame → 8.7) gets that
+      # Gradle downloaded into the workspace (GameCI mounts it at /github/workspace) and pointed at
+      # by GameBuilder. Wrappers that omit it (e.g. Sway on Unity 6) use Unity's bundled Gradle.
+      - name: Provide custom Gradle (Android)
+        if: runner.os == 'Linux' && inputs.platform == 'Android' && inputs.gradle-version != ''
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          curl -sSL "https://services.gradle.org/distributions/gradle-${{ inputs.gradle-version }}-bin.zip" -o gradle.zip
+          unzip -q gradle.zip && rm gradle.zip
+
       - name: Build (GameCI)
         uses: game-ci/unity-builder@v5
         env:
@@ -101,6 +115,7 @@ jobs:
             -buildConfig ${{ inputs.config }}
             -platform ${{ inputs.platform }}
             -buildNumber ${{ github.run_number }}
+            ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
             ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
 
       - name: Upload build artifact

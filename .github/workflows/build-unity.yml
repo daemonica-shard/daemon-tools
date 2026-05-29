@@ -31,6 +31,10 @@ on:
         description: 'Custom Gradle to download + point Unity at, e.g. 8.7 (blank = Unity bundled Gradle)'
         type: string
         default: ''
+      jdk-version:
+        description: 'JDK major version to download + point Unity at, e.g. 17 (blank = Unity bundled JDK)'
+        type: string
+        default: ''
     secrets:
       UNITY_LICENSE:
         required: true
@@ -91,6 +95,14 @@ jobs:
           curl -sSL "https://services.gradle.org/distributions/gradle-${{ inputs.gradle-version }}-bin.zip" -o gradle.zip
           unzip -q gradle.zip && rm gradle.zip
 
+      # Same opt-in as Gradle: Unity's bundled JDK (11) is too old for newer AGP (needs 17).
+      - name: Provide JDK (Android)
+        if: runner.os == 'Linux' && inputs.platform == 'Android' && inputs.jdk-version != ''
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          curl -sSL "https://api.adoptium.net/v3/binary/latest/${{ inputs.jdk-version }}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o jdk.tar.gz
+          mkdir -p jdk && tar -xzf jdk.tar.gz -C jdk --strip-components=1 && rm jdk.tar.gz
+
       - name: Build (GameCI)
         uses: game-ci/unity-builder@v5
         env:
@@ -117,6 +129,7 @@ jobs:
             -platform ${{ inputs.platform }}
             -buildNumber ${{ github.run_number }}
             ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
+            ${{ inputs.jdk-version != '' && '-jdkPath /github/workspace/jdk' || '' }}
             ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
 
       # Save Library/ even on failure — it's complete before Gradle, so this warms the next run.

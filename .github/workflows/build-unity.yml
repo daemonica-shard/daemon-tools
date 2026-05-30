@@ -132,6 +132,12 @@ jobs:
             ${{ inputs.jdk-version != '' && '-jdkPath /github/workspace/jdk' || '' }}
             ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
 
+      # GameCI's container writes Library/ as a uid the host runner can't read, so tar fails
+      # silently on cache save. Chown to the runner user before saving.
+      - name: Fix Library/ ownership for cache save
+        if: always() && runner.os == 'Linux'
+        run: sudo chown -R $(id -u):$(id -g) "${{ inputs.project-path }}/Library" 2>/dev/null || true
+
       # Save Library/ even on failure — it's complete before Gradle, so this warms the next run.
       - name: Save Library/ cache
         if: always() && steps.cache-library.outputs.cache-hit != 'true'
@@ -141,7 +147,7 @@ jobs:
           key: ${{ steps.cache-library.outputs.cache-primary-key }}
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
           path: ${{ inputs.project-path }}/Builds

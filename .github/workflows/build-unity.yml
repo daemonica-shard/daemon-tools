@@ -128,6 +128,7 @@ jobs:
             -buildConfig ${{ inputs.config }}
             -platform ${{ inputs.platform }}
             -buildNumber ${{ github.run_number }}
+            -appName ${{ github.event.repository.name }}
             ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
             ${{ inputs.jdk-version != '' && '-jdkPath /github/workspace/jdk' || '' }}
             ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}

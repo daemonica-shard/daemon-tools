@@ -138,6 +138,17 @@ jobs:
         if: always() && runner.os == 'Linux'
         run: sudo chown -R $(id -u):$(id -g) "${{ inputs.project-path }}/Library" 2>/dev/null || true
 
+      # The build re-pulled GameCI's ~25 GB Unity image (we pruned it at the start), refilling
+      # the disk. Compressing Library/ into cache.tzst needs free space ≈ the archive size, so
+      # reclaim the now-unused image before the cache save / artifact upload — else tar dies with
+      # "No space left on device".
+      - name: Reclaim disk before cache save
+        if: always() && runner.os == 'Linux'
+        run: |
+          echo "Before:"; df -h /
+          sudo docker image prune --all --force || true
+          echo "After:"; df -h /
+
       # Save Library/ even on failure — it's complete before Gradle, so this warms the next run.
       - name: Save Library/ cache
         if: always() && steps.cache-library.outputs.cache-hit != 'true'

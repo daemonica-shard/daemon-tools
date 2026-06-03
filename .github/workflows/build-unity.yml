@@ -114,6 +114,17 @@ jobs:
           unityVersion: ${{ inputs.unity-version || 'auto' }}
           targetPlatform: ${{ inputs.platform }}
           allowDirtyBuild: true
+          # Own the version ourselves. GameCI's default `Semantic` strategy generates its own
+          # version (0.0.<commit-count> when there are no v* tags) and injects `-buildVersion`
+          # into Unity's command line BEFORE our customParameters — so GameBuilder's first-match
+          # arg parse read GameCI's value and ignored ours. `Custom` makes GameCI forward exactly
+          # our build-version as the single -buildVersion (empty when blank → GameBuilder leaves
+          # the project's bundleVersion untouched). androidVersionCode is pinned to the run number
+          # so GameCI skips parsing the version string for a code (GameBuilder sets the real
+          # bundleVersionCode from -buildNumber regardless).
+          versioning: Custom
+          version: ${{ inputs.build-version }}
+          androidVersionCode: ${{ github.run_number }}
           # Android signing: GameCI decodes the keystore + sets env vars; GameBuilder applies them.
           androidKeystoreName: user.keystore
           androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -131,7 +142,6 @@ jobs:
             -appName ${{ github.event.repository.name }}
             ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
             ${{ inputs.jdk-version != '' && '-jdkPath /github/workspace/jdk' || '' }}
-            ${{ inputs.build-version != '' && format('-buildVersion {0}', inputs.build-version) || '' }}
 
       # GameCI's container writes Library/ as a uid the host runner can't read, so tar fails
       # silently on cache save. Chown to the runner user before saving.

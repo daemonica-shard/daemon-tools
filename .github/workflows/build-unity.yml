@@ -113,6 +113,7 @@ jobs:
           mkdir -p jdk && tar -xzf jdk.tar.gz -C jdk --strip-components=1 && rm jdk.tar.gz
 
       - name: Build (GameCI)
+        id: build
         uses: game-ci/unity-builder@v5
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -177,13 +178,6 @@ jobs:
           path: ${{ inputs.project-path }}/Library
           key: ${{ steps.cache-library.outputs.cache-primary-key }}
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
-          path: ${{ inputs.project-path }}/Builds
-          if-no-files-found: error
-
       # Tap-to-install delivery: APKs → anyone-with-link URL in the run summary; Release symbols
       # archived alongside; .aab skipped. drive.file token only ever touches its own AutoBuilds/ tree.
       - name: Upload to Google Drive (rclone)
@@ -214,3 +208,11 @@ jobs:
             rclone copyto "$sym" "gdrive:AutoBuilds/$repo/symbols/$name"
             echo "🧩 symbols archived: \`$name\`" >> "$GITHUB_STEP_SUMMARY"
           done
+
+      - name: Upload build artifact (fallback)
+        if: always() && steps.build.outcome == 'success' && steps.drive.outcome != 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
+          path: ${{ inputs.project-path }}/Builds
+          if-no-files-found: error

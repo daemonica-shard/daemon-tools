@@ -51,11 +51,20 @@ on:
         required: false
       ANDROID_KEYALIAS_PASS:
         required: false
+      # Google Drive delivery (rclone). Optional: when unset, the Drive-upload step is skipped,
+      # so repos without it configured (e.g. Sway until it's set up) build normally. Holds the
+      # contents of a `drive.file`-scoped rclone.conf with a remote named `gdrive`.
+      RCLONE_CONFIG:
+        required: false
 
 jobs:
   build:
     name: ${{ inputs.platform }} ${{ inputs.config }}
     runs-on: ${{ inputs.platform == 'iOS' && 'macos-latest' || 'ubuntu-latest' }}
+    # Resolve the secret to a boolean here: `secrets` can't be referenced in a step `if:`, but a
+    # plain env flag can. Avoids putting the config contents in an env just to gate the step.
+    env:
+      HAVE_RCLONE: ${{ secrets.RCLONE_CONFIG != '' }}
     steps:
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -174,3 +183,34 @@ jobs:
           name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
           path: ${{ inputs.project-path }}/Builds
           if-no-files-found: error
+
+      # Tap-to-install delivery: APKs → anyone-with-link URL in the run summary; Release symbols
+      # archived alongside; .aab skipped. drive.file token only ever touches its own AutoBuilds/ tree.
+      - name: Upload to Google Drive (rclone)
+        id: drive
+        if: success() && runner.os == 'Linux' && inputs.platform == 'Android' && env.HAVE_RCLONE == 'true'
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONFIG }}   # not RCLONE_CONFIG — that name is rclone's config-path var
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          mkdir -p ~/.config/rclone
+          printf '%s' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+
+          repo='${{ github.event.repository.name }}'
+          builds='${{ inputs.project-path }}/Builds'
+          shopt -s nullglob
+
+          for apk in "$builds"/*.apk; do
+            name=$(basename "$apk")
+            rclone copyto "$apk" "gdrive:AutoBuilds/$repo/apk/$name"
+            link=$(rclone link "gdrive:AutoBuilds/$repo/apk/$name")
+            echo "apk_link=$link" >> "$GITHUB_OUTPUT"
+            echo "📱 **$name** → $link" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          for sym in "$builds"/*.symbols.zip; do
+            name=$(basename "$sym")
+            rclone copyto "$sym" "gdrive:AutoBuilds/$repo/symbols/$name"
+            echo "🧩 symbols archived: \`$name\`" >> "$GITHUB_STEP_SUMMARY"
+          done

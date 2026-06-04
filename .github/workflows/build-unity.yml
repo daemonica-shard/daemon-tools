@@ -35,6 +35,10 @@ on:
         description: 'JDK major version to download + point Unity at, e.g. 17 (blank = Unity bundled JDK)'
         type: string
         default: ''
+      display-name:
+        description: 'Human app name for notifications, e.g. "Word Game" (blank = repo name)'
+        type: string
+        default: ''
     secrets:
       UNITY_LICENSE:
         required: true
@@ -56,6 +60,9 @@ on:
       # contents of a `drive.file`-scoped rclone.conf with a remote named `gdrive`.
       RCLONE_CONFIG:
         required: false
+      # Pachca incoming-webhook URL for the #builds chat. Optional: unset → notify step skipped.
+      PACHCA_WEBHOOK_URL:
+        required: false
 
 jobs:
   build:
@@ -65,6 +72,7 @@ jobs:
     # plain env flag can. Avoids putting the config contents in an env just to gate the step.
     env:
       HAVE_RCLONE: ${{ secrets.RCLONE_CONFIG != '' }}
+      HAVE_PACHCA: ${{ secrets.PACHCA_WEBHOOK_URL != '' }}
     steps:
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -199,7 +207,10 @@ jobs:
             name=$(basename "$apk")
             rclone copyto "$apk" "gdrive:AutoBuilds/$repo/apk/$name"
             link=$(rclone link "gdrive:AutoBuilds/$repo/apk/$name")
+            # name is <app>-<config>-<version>-build<N>.apk; version has no dashes, so peel it out
+            base="${name%.apk}"; rest="${base%-build*}"; version="${rest##*-}"
             echo "apk_link=$link" >> "$GITHUB_OUTPUT"
+            echo "apk_version=$version" >> "$GITHUB_OUTPUT"
             echo "📱 **$name** → $link" >> "$GITHUB_STEP_SUMMARY"
           done
 
@@ -216,3 +227,22 @@ jobs:
           name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}
           path: ${{ inputs.project-path }}/Builds
           if-no-files-found: error
+
+      # Notify the #builds chat (build users) on success, only when there's an installable APK to
+      # hand out — so Release (.aab only) and failures stay silent here; build failures are meant
+      # for a separate dev channel (future PACHCA_FAIL_WEBHOOK_URL, not wired yet).
+      - name: Notify Pachca (#builds)
+        if: success() && env.HAVE_PACHCA == 'true' && steps.drive.outputs.apk_link != ''
+        env:
+          PACHCA_WEBHOOK_URL: ${{ secrets.PACHCA_WEBHOOK_URL }}
+          APP: ${{ inputs.display-name || github.event.repository.name }}
+          CONFIG: ${{ inputs.config }}
+          PLATFORM: ${{ inputs.platform }}
+          VERSION: ${{ steps.drive.outputs.apk_version }}
+          LINK: ${{ steps.drive.outputs.apk_link }}
+        run: |
+          set -euo pipefail
+          msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nLink: %s' \
+            "$APP" "$CONFIG" "$VERSION" "$PLATFORM" "$LINK")
+          jq -nc --arg m "$msg" '{message: $m}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$PACHCA_WEBHOOK_URL"

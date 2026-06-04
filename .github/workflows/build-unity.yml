@@ -63,6 +63,11 @@ on:
       # Pachca incoming-webhook URL for the #builds chat. Optional: unset → notify step skipped.
       PACHCA_WEBHOOK_URL:
         required: false
+      # Telegram bot token + target chat id. Optional: either unset → Telegram notify skipped.
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
 
 jobs:
   build:
@@ -73,6 +78,7 @@ jobs:
     env:
       HAVE_RCLONE: ${{ secrets.RCLONE_CONFIG != '' }}
       HAVE_PACHCA: ${{ secrets.PACHCA_WEBHOOK_URL != '' }}
+      HAVE_TELEGRAM: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
     steps:
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -246,3 +252,24 @@ jobs:
             "$APP" "$CONFIG" "$VERSION" "$PLATFORM" "$LINK")
           jq -nc --arg m "$msg" '{message: $m}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$PACHCA_WEBHOOK_URL"
+
+      # Same message/trigger as Pachca, different transport. Independent opt-in: fires only when
+      # both the bot token and chat id are set, so one channel works without the other.
+      - name: Notify Telegram (builds)
+        if: success() && env.HAVE_TELEGRAM == 'true' && steps.drive.outputs.apk_link != ''
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APP: ${{ inputs.display-name || github.event.repository.name }}
+          CONFIG: ${{ inputs.config }}
+          PLATFORM: ${{ inputs.platform }}
+          VERSION: ${{ steps.drive.outputs.apk_version }}
+          LINK: ${{ steps.drive.outputs.apk_link }}
+        run: |
+          set -euo pipefail
+          msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nLink: %s' \
+            "$APP" "$CONFIG" "$VERSION" "$PLATFORM" "$LINK")
+          jq -nc --arg c "$TG_CHAT" --arg t "$msg" \
+            '{chat_id: $c, text: $t, disable_web_page_preview: true}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' -d @- \
+              "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"

@@ -71,6 +71,9 @@ on:
         required: false
       TELEGRAM_CHAT_ID:
         required: false
+      # Google Play service-account JSON. Optional: unset → Play upload skipped.
+      PLAY_SERVICE_ACCOUNT_JSON:
+        required: false
 
 jobs:
   build:
@@ -83,6 +86,7 @@ jobs:
       HAVE_PACHCA: ${{ secrets.PACHCA_WEBHOOK_URL != '' }}
       HAVE_PACHCA_FAIL: ${{ secrets.PACHCA_FAIL_WEBHOOK_URL != '' }}
       HAVE_TELEGRAM: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+      HAVE_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -102,21 +106,25 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      # Resolve the version up front so it's available to notifications even when the build fails
-      # (no APK to parse on failure). Mirrors GameBuilder: the passed build-version (v stripped),
-      # else the project's bundleVersion. [[:space:]] keeps the sed portable to macOS (iOS runner).
-      - name: Resolve version
+      # Resolve version + package up front so they're available even when the build fails (no APK
+      # to parse on failure). Version mirrors GameBuilder: passed build-version (v stripped), else
+      # the project's bundleVersion. Package = Android applicationIdentifier. [[:space:]] keeps sed
+      # portable to macOS (iOS runner).
+      - name: Resolve version + package
         id: version
         run: |
+          f="${{ inputs.project-path }}/ProjectSettings/ProjectSettings.asset"
           v='${{ inputs.build-version }}'
           v="${v#v}"; v="${v#V}"
           if [ -z "$v" ]; then
-            f="${{ inputs.project-path }}/ProjectSettings/ProjectSettings.asset"
             v=$(grep -E '^[[:space:]]*bundleVersion:' "$f" 2>/dev/null | head -1 \
                 | sed -E 's/.*bundleVersion:[[:space:]]*//' | tr -d '\r' || true)
           fi
+          pkg=$(awk '/applicationIdentifier:/{seen=1} seen&&/Android:/{print; exit}' "$f" \
+                | sed -E 's/.*Android:[[:space:]]*//' | tr -d '\r' || true)
           echo "v=$v" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: $v"
+          echo "package=$pkg" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $v, package: $pkg"
 
       - name: Restore Library/ cache
         id: cache-library
@@ -246,8 +254,21 @@ jobs:
             echo "🧩 symbols archived: \`$name\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
+      # Publish the Release .aab to Google Play (internal track, rolled out). Release-only, when the
+      # service-account secret is present. NOTE: versionCode (= run number) must exceed the highest
+      # already on Play or Play rejects the upload — failing this step (red job, no notification).
+      - name: Upload to Google Play (internal)
+        if: success() && runner.os == 'Linux' && inputs.platform == 'Android' && inputs.config == 'Release' && env.HAVE_PLAY == 'true'
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5  # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ steps.version.outputs.package }}
+          releaseFiles: ${{ inputs.project-path }}/Builds/*.aab
+          track: internal
+          status: completed
+
       - name: Upload build artifact (fallback)
-        if: always() && steps.build.outcome == 'success' && steps.drive.outcome != 'success'
+        if: always() && steps.build.outcome == 'success' && steps.drive.outputs.apk_link == ''
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_number }}

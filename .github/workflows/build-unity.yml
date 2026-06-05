@@ -63,6 +63,9 @@ on:
       # Pachca incoming-webhook URL for the #builds chat. Optional: unset → notify step skipped.
       PACHCA_WEBHOOK_URL:
         required: false
+      # Pachca incoming-webhook URL for the dev/errors chat — used only to report build failures.
+      PACHCA_FAIL_WEBHOOK_URL:
+        required: false
       # Telegram bot token + target chat id. Optional: either unset → Telegram notify skipped.
       TELEGRAM_BOT_TOKEN:
         required: false
@@ -78,6 +81,7 @@ jobs:
     env:
       HAVE_RCLONE: ${{ secrets.RCLONE_CONFIG != '' }}
       HAVE_PACHCA: ${{ secrets.PACHCA_WEBHOOK_URL != '' }}
+      HAVE_PACHCA_FAIL: ${{ secrets.PACHCA_FAIL_WEBHOOK_URL != '' }}
       HAVE_TELEGRAM: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
     steps:
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
@@ -97,6 +101,22 @@ jobs:
           submodules: recursive
           lfs: true
           fetch-depth: 0
+
+      # Resolve the version up front so it's available to notifications even when the build fails
+      # (no APK to parse on failure). Mirrors GameBuilder: the passed build-version (v stripped),
+      # else the project's bundleVersion. [[:space:]] keeps the sed portable to macOS (iOS runner).
+      - name: Resolve version
+        id: version
+        run: |
+          v='${{ inputs.build-version }}'
+          v="${v#v}"; v="${v#V}"
+          if [ -z "$v" ]; then
+            f="${{ inputs.project-path }}/ProjectSettings/ProjectSettings.asset"
+            v=$(grep -E '^[[:space:]]*bundleVersion:' "$f" 2>/dev/null | head -1 \
+                | sed -E 's/.*bundleVersion:[[:space:]]*//' | tr -d '\r' || true)
+          fi
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $v"
 
       - name: Restore Library/ cache
         id: cache-library
@@ -235,8 +255,8 @@ jobs:
           if-no-files-found: error
 
       # Notify the #builds chat (build users) on success, only when there's an installable APK to
-      # hand out — so Release (.aab only) and failures stay silent here; build failures are meant
-      # for a separate dev channel (future PACHCA_FAIL_WEBHOOK_URL, not wired yet).
+      # hand out — so Release (.aab only) and failures stay silent here; build failures go to the
+      # separate dev channel via the failure step below.
       - name: Notify Pachca (#builds)
         if: success() && env.HAVE_PACHCA == 'true' && steps.drive.outputs.apk_link != ''
         env:
@@ -273,3 +293,21 @@ jobs:
             '{chat_id: $c, text: $t, disable_web_page_preview: true}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' -d @- \
               "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"
+
+      # Report build failures to the dev/errors channel — fires only when the GameCI build step
+      # itself failed (not cache/upload hiccups). Version comes from the resolve step, so it's
+      # present even though no APK was produced.
+      - name: Notify Pachca on failure (dev)
+        if: always() && steps.build.outcome == 'failure' && env.HAVE_PACHCA_FAIL == 'true'
+        env:
+          PACHCA_WEBHOOK_URL: ${{ secrets.PACHCA_FAIL_WEBHOOK_URL }}
+          APP: ${{ inputs.display-name || github.event.repository.name }}
+          CONFIG: ${{ inputs.config }}
+          PLATFORM: ${{ inputs.platform }}
+          VERSION: ${{ steps.version.outputs.v }}
+        run: |
+          set -euo pipefail
+          msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nFAILED' \
+            "$APP" "$CONFIG" "$VERSION" "$PLATFORM")
+          jq -nc --arg m "$msg" '{message: $m}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$PACHCA_WEBHOOK_URL"

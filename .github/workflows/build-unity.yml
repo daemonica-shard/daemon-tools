@@ -101,6 +101,18 @@ jobs:
           sudo docker image prune --all --force || true
           echo "After:"; df -h /
 
+      # Cold builds (Library cache miss) OOM-freeze the 16 GB runner during IL2CPP; swap on the
+      # runner's spare /mnt disk lets them finish slow instead of dying with no log error.
+      - name: Add swap (cold-build OOM guard)
+        if: runner.os == 'Linux'
+        run: |
+          free -h
+          sudo fallocate -l 16G /mnt/swapfile2
+          sudo chmod 600 /mnt/swapfile2
+          sudo mkswap /mnt/swapfile2
+          sudo swapon /mnt/swapfile2
+          free -h
+
       - name: Checkout (with TEL submodule + LFS)
         uses: actions/checkout@v5
         with:

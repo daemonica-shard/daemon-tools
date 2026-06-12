@@ -95,7 +95,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           echo "Before:"; df -h /
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android /opt/hostedtoolcache \
+            /usr/local/share/powershell /usr/share/swift /usr/local/julia* /opt/microsoft /usr/share/miniconda \
+            /opt/az /usr/local/lib/node_modules /usr/local/share/chromium /opt/google/chrome /usr/lib/firefox
           sudo docker image prune --all --force || true
           echo "After:"; df -h /
 
@@ -104,7 +106,6 @@ jobs:
         with:
           submodules: recursive
           lfs: true
-          fetch-depth: 0
 
       # Resolve version + package up front so they're available even when the build fails (no APK
       # to parse on failure). Version mirrors GameBuilder: passed build-version (v stripped), else

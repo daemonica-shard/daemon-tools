@@ -88,6 +88,20 @@ jobs:
       HAVE_TELEGRAM: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
       HAVE_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
+      # GameCI's ~25 GB Unity image lands in /var/lib/docker on the 72 GB root disk, leaving too
+      # little for a cold build's workspace (Library + IL2CPP + Gradle staging) → "No space left
+      # on device" kills the runner mid-build. Move Docker's data-root to the spare ~70 GB /mnt
+      # disk so the whole root disk stays free for the workspace.
+      - name: Move Docker to /mnt
+        if: runner.os == 'Linux'
+        run: |
+          sudo systemctl stop docker docker.socket
+          sudo mkdir -p /mnt/docker
+          echo '{"data-root":"/mnt/docker"}' | sudo tee /etc/docker/daemon.json
+          sudo rm -rf /var/lib/docker
+          sudo systemctl start docker
+          docker info | grep "Docker Root Dir"
+
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
       # own container) to avoid "no space left on device". The runner VM is disposable.
@@ -101,8 +115,8 @@ jobs:
           sudo docker image prune --all --force || true
           echo "After:"; df -h /
 
-      # Cold builds (Library cache miss) OOM-freeze the 16 GB runner during IL2CPP; swap on the
-      # runner's spare /mnt disk lets them finish slow instead of dying with no log error.
+      # The runner has only ~7.8 GB RAM; a cold IL2CPP + parallel clang can spike past it. Swap on
+      # /mnt is cheap insurance so a memory spike degrades to slow instead of an OOM kill.
       - name: Add swap (cold-build OOM guard)
         if: runner.os == 'Linux'
         run: |

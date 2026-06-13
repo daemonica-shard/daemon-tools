@@ -181,29 +181,6 @@ jobs:
           curl -sSL "https://api.adoptium.net/v3/binary/latest/${{ inputs.jdk-version }}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o jdk.tar.gz
           mkdir -p jdk && tar -xzf jdk.tar.gz -C jdk --strip-components=1 && rm jdk.tar.gz
 
-      # DIAGNOSTIC (temporary): log / and /mnt usage every 15s to /mnt/diskmon.log (survives /
-      # filling). Above 88% it records the biggest dirs on / so we see the culprit; at 95% it kills
-      # the build container so the runner survives the ENOSPC and the report step below can run —
-      # otherwise a 100%-full / hard-kills the runner and skips every remaining step. Remove once
-      # the cold-build disk crash is pinned down.
-      - name: Start disk monitor
-        if: runner.os == 'Linux'
-        run: |
-          nohup sudo bash -c '
-            while true; do
-              pct=$(df --output=pcent / | tail -1 | tr -dc 0-9)
-              { echo "=== $(date -u +%H:%M:%S)  root=${pct}% ==="; df -h / /mnt | grep -v Filesystem; } >> /mnt/diskmon.log
-              if [ "${pct:-0}" -ge 88 ]; then
-                { echo "-- biggest on / --"; du -sh /home/runner/work /var/lib/docker /usr /opt 2>/dev/null | sort -rh | head; } >> /mnt/diskmon.log
-              fi
-              if [ "${pct:-0}" -ge 95 ]; then
-                echo "!! / at ${pct}% — killing build container to spare the runner" >> /mnt/diskmon.log
-                docker ps -q | xargs -r docker kill >> /mnt/diskmon.log 2>&1
-              fi
-              sleep 15
-            done' >/dev/null 2>&1 &
-          disown
-
       - name: Build (GameCI)
         id: build
         uses: game-ci/unity-builder@v5
@@ -244,12 +221,6 @@ jobs:
             -appName ${{ github.event.repository.name }}
             ${{ inputs.gradle-version != '' && format('-gradleDir /github/workspace/gradle-{0}', inputs.gradle-version) || '' }}
             ${{ inputs.jdk-version != '' && '-jdkPath /github/workspace/jdk' || '' }}
-
-      # DIAGNOSTIC (temporary): dump the disk-usage curve captured during the build. Paired with the
-      # "Start disk monitor" step above; remove both together.
-      - name: Disk monitor report
-        if: always() && runner.os == 'Linux'
-        run: tail -n 400 /mnt/diskmon.log || echo "no monitor log"
 
       # GameCI's container writes Library/ as a uid the host runner can't read, so tar fails
       # silently on cache save. Chown to the runner user before saving.

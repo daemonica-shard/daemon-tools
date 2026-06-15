@@ -39,6 +39,10 @@ on:
         description: 'Human app name for notifications, e.g. "Word Game" (blank = repo name)'
         type: string
         default: ''
+      description:
+        description: 'Free-text build note'
+        type: string
+        default: ''
     secrets:
       UNITY_LICENSE:
         required: true
@@ -314,10 +318,14 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           VERSION: ${{ steps.drive.outputs.apk_version }}
           LINK: ${{ steps.drive.outputs.apk_link }}
+          DESCRIPTION: ${{ inputs.description }}
         run: |
           set -euo pipefail
           msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nLink: %s' \
             "$APP" "$CONFIG" "$VERSION" "$PLATFORM" "$LINK")
+          if [ -n "$DESCRIPTION" ]; then
+            msg=$(printf '%s\nDescription: %s' "$msg" "$DESCRIPTION")
+          fi
           jq -nc --arg m "$msg" '{message: $m}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$PACHCA_WEBHOOK_URL"
 

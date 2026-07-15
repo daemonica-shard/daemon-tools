@@ -100,11 +100,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo systemctl stop docker docker.socket
+          # Remove pre-existing swap and temp files on /mnt to maximise space for Docker
+          sudo swapoff /mnt/swapfile 2>/dev/null || true
+          sudo rm -f /mnt/swapfile
           sudo mkdir -p /mnt/docker
           echo '{"data-root":"/mnt/docker"}' | sudo tee /etc/docker/daemon.json
           sudo rm -rf /var/lib/docker
           sudo systemctl start docker
           docker info | grep "Docker Root Dir"
+          echo "/mnt free:"; df -h /mnt
 
       # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -120,12 +124,12 @@ jobs:
           echo "After:"; df -h /
 
       # ~7.8 GB RAM is tight for a cold IL2CPP + clang; a small swap on /mnt is OOM insurance.
-      # Kept at 8 GB (not 16) so Docker, now also on /mnt, has room for the image + container layers.
+      # Kept at 4 GB to leave room for Docker (Unity 6 images are 25-35 GB) on /mnt.
       - name: Add swap (cold-build OOM guard)
         if: runner.os == 'Linux'
         run: |
           free -h
-          sudo fallocate -l 8G /mnt/swapfile2
+          sudo fallocate -l 4G /mnt/swapfile2
           sudo chmod 600 /mnt/swapfile2
           sudo mkswap /mnt/swapfile2
           sudo swapon /mnt/swapfile2

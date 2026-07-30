@@ -12,6 +12,8 @@ build/
 .env
 .env.*
 !.env.example
+config/tenants.yaml
+audit/
 *.p8
 *.p12
 *.mobileprovision

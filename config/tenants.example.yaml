@@ -1,0 +1,27 @@
+# Tenant registry — the real tenants.yaml lives ONLY on the server (and locally for dev),
+# never in this public repo. Copy to config/tenants.yaml and fill in.
+#
+# Tenant id = URL path prefix: "daemonica/sway" is served at /daemonica/sway/mcp.
+# Keys: generate with `pnpm keygen` — give the token to the caller, paste the hash here.
+tenants:
+  tapempire:
+    display: TapEmpire
+    keys:
+      example-dev: "0000000000000000000000000000000000000000000000000000000000000000"
+    allow_emails: []
+    tools:
+      ping: {}
+      # livedoc: Firebase Remote Config inspection (template, version history, tracked features).
+      # firebase_sa points to a service-account JSON on the SERVER (mounted, never in the repo).
+      livedoc:
+        firebase_project: my-project-id
+        firebase_sa: /config/firebase/my-project-sa.json
+        features_file: /config/features/my-project.yaml
+        cache_ttl_seconds: 300
+
+  daemonica/sway:
+    display: Sway
+    keys: {}
+    allow_emails: []
+    tools:
+      ping: {}

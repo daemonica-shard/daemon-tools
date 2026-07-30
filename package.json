@@ -1,0 +1,14 @@
+{
+  "name": "daemon-tools",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter '@daemon-tools/*' build && pnpm --filter mcp-server dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r build && pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "keygen": "pnpm --filter mcp-server keygen"
+  }
+}

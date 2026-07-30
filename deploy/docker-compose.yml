@@ -1,0 +1,45 @@
+# The whole server is this folder: rsync it to the box, fill .env + config/, `docker compose up -d`.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv/landing:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  mcp:
+    image: ghcr.io/${GHCR_OWNER}/daemon-tools-mcp:prod
+    restart: unless-stopped
+    volumes:
+      - ./config/prod:/config:ro
+      - mcp_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mcp-dev:
+    image: ghcr.io/${GHCR_OWNER}/daemon-tools-mcp:dev
+    restart: unless-stopped
+    volumes:
+      - ./config/dev:/config:ro
+      - mcp_dev_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  caddy_data:
+  caddy_config:
+  mcp_data:
+  mcp_dev_data:

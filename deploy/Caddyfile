@@ -1,0 +1,13 @@
+# TLS certificates are automatic (Let's Encrypt) for every hostname below.
+{$DOMAIN} {
+	root * /srv/landing
+	file_server
+}
+
+mcp.{$DOMAIN} {
+	reverse_proxy mcp:3000
+}
+
+dev.mcp.{$DOMAIN} {
+	reverse_proxy mcp-dev:3000
+}

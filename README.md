@@ -10,6 +10,7 @@ Automation & tooling monorepo for mobile games.
 | `mcp-server/` | Hosted multi-tenant MCP server (one endpoint per project, bearer-key auth, audit log) |
 | `lib/firebase/` | Shared Firebase fetchers (Remote Config template + versions, TTL cache) |
 | `config/` | `tenants.example.yaml` — real tenant config lives only on the server |
+| `deploy/` | The whole server: Caddy + Docker Compose + landing (see `deploy/README.md`) |
 
 ## MCP server
 

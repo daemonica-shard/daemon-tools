@@ -5,13 +5,16 @@ pieces (`.env`, `config/`) + `docker compose up -d`.
 
 ## First-time server setup (Hetzner CX22, Ubuntu)
 
+Root login is disabled on OVH images; everything below runs as your sudo user.
+
 ```sh
 # on the server
-apt-get update && apt-get install -y docker.io docker-compose-v2
-mkdir -p /opt/daemon-tools
+sudo apt update && sudo apt install -y docker.io docker-compose-v2
+sudo mkdir -p /opt/daemon-tools
+sudo chown "$USER:$USER" /opt/daemon-tools    # so rsync can write without sudo
 
 # from your machine
-rsync -av deploy/ root@SERVER:/opt/daemon-tools/
+rsync -av deploy/ USER@SERVER:/opt/daemon-tools/
 
 # on the server
 cd /opt/daemon-tools

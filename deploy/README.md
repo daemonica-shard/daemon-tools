@@ -41,6 +41,18 @@ config/
 Containers see their config dir as `/config`, so paths inside tenants.yaml are like
 `/config/firebase/wordgame-sa.json`. Audit logs persist in named volumes (`/data/audit.jsonl`).
 
+**Permissions.** The image runs as `node` = uid 1000, which normally differs from the admin
+user's uid (cloud-init takes 1000 for the image's default user), so a service-account file
+owned by the admin is unreadable to the container — `EACCES` in a startup crash loop. Give the
+keys to uid 1000 and keep the directories traversable:
+
+```sh
+sudo chmod 755 config config/prod config/dev config/*/firebase
+sudo chown 1000:1000 config/*/firebase/*.json
+sudo chmod 600 config/*/firebase/*.json    # secret: only the container can read it
+chmod 644 config/*/tenants.yaml            # hashes only, not secret
+```
+
 ## Images
 
 Built and pushed by `.github/workflows/deploy-mcp.yml`:

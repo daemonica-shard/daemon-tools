@@ -19,6 +19,10 @@ ENV NODE_ENV=production \
     AUDIT_LOG_PATH=/data/audit.jsonl
 WORKDIR /app
 COPY --from=build /app .
+# Docker initializes a fresh named volume from the image's content at the mount point,
+# ownership included. Without this, /data is created root-owned and the `node` user
+# can't write the audit log.
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

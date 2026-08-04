@@ -20,29 +20,43 @@ export function createApp(tenants: TenantConfig[], audit: AuditLog): express.Exp
 
     app.post(path, bearerAuth(tenant, audit), async (req, res) => {
       const identity = res.locals.identity as string;
-
-      // Audit at the JSON-RPC layer: one line per tools/call, before execution.
       const body = req.body;
-      if (body?.method === "tools/call") {
-        await audit.write({
-          event: "tool_call",
-          tenant: tenant.id,
-          identity,
-          tool: body.params?.name,
-          args: body.params?.arguments,
-        });
-      }
 
-      // Stateless mode: a fresh server + transport per request. No session state means
-      // any request can hit any process — what we want behind a proxy.
-      const server = buildMcpServer(tenant, tools, identity);
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      res.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
-      await server.connect(transport);
-      await transport.handleRequest(req, res, body);
+      // Express 4 does not route async rejections to the error handler — an unhandled one
+      // leaves the client hanging with no response at all. Catch everything here.
+      try {
+        // Audit at the JSON-RPC layer: one line per tools/call, before execution. Deliberately
+        // fail-closed: if the call can't be recorded, it doesn't run.
+        if (body?.method === "tools/call") {
+          await audit.write({
+            event: "tool_call",
+            tenant: tenant.id,
+            identity,
+            tool: body.params?.name,
+            args: body.params?.arguments,
+          });
+        }
+
+        // Stateless mode: a fresh server + transport per request. No session state means
+        // any request can hit any process — what we want behind a proxy.
+        const server = buildMcpServer(tenant, tools, identity);
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        res.on("close", () => {
+          void transport.close();
+          void server.close();
+        });
+        await server.connect(transport);
+        await transport.handleRequest(req, res, body);
+      } catch (err) {
+        console.error(`[${tenant.id}] request failed:`, err);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal error" },
+            id: body?.id ?? null,
+          });
+        }
+      }
     });
 
     // Stateless servers have no SSE stream to resume and no session to delete.

@@ -3,6 +3,10 @@
 The entire server is this folder. Reproducing it anywhere = rsync + fill in two gitignored
 pieces (`.env`, `config/`) + `docker compose up -d`.
 
+Standing up a **new** host from scratch: see [SETUP.md](SETUP.md) — the full ordered runbook,
+including the gotchas (rootless images, sshd drop-in precedence, container uid 1000, the missing
+`:prod` tag). This file covers routine operation once it's running.
+
 ## First-time server setup (Hetzner CX22, Ubuntu)
 
 Root login is disabled on OVH images; everything below runs as your sudo user.

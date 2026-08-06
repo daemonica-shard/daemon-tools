@@ -371,3 +371,23 @@ jobs:
             "$APP" "$CONFIG" "$VERSION" "$PLATFORM")
           jq -nc --arg m "$msg" '{message: $m}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$PACHCA_WEBHOOK_URL"
+
+      # Same failure trigger as the Pachca dev step, but to the single Telegram channel — successes
+      # and failures share TELEGRAM_CHAT_ID. Version comes from the resolve step (no APK on failure).
+      - name: Notify Telegram on failure (builds)
+        if: always() && steps.build.outcome == 'failure' && env.HAVE_TELEGRAM == 'true'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APP: ${{ inputs.display-name || github.event.repository.name }}
+          CONFIG: ${{ inputs.config }}
+          PLATFORM: ${{ inputs.platform }}
+          VERSION: ${{ steps.version.outputs.v }}
+        run: |
+          set -euo pipefail
+          msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nFAILED' \
+            "$APP" "$CONFIG" "$VERSION" "$PLATFORM")
+          jq -nc --arg c "$TG_CHAT" --arg t "$msg" \
+            '{chat_id: $c, text: $t, disable_web_page_preview: true}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' -d @- \
+              "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"

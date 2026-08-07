@@ -345,10 +345,14 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           VERSION: ${{ steps.drive.outputs.apk_version }}
           LINK: ${{ steps.drive.outputs.apk_link }}
+          DESCRIPTION: ${{ inputs.description }}
         run: |
           set -euo pipefail
           msg=$(printf '%s\nType: %s\nVersion: %s\nPlatform: %s\nLink: %s' \
             "$APP" "$CONFIG" "$VERSION" "$PLATFORM" "$LINK")
+          if [ -n "$DESCRIPTION" ]; then
+            msg=$(printf '%s\nDescription: %s' "$msg" "$DESCRIPTION")
+          fi
           jq -nc --arg c "$TG_CHAT" --arg t "$msg" \
             '{chat_id: $c, text: $t, disable_web_page_preview: true}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' -d @- \

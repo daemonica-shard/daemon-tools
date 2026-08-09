@@ -11,3 +11,7 @@ mcp.{$DOMAIN} {
 dev.mcp.{$DOMAIN} {
 	reverse_proxy mcp-dev:3000
 }
+
+auth.{$DOMAIN} {
+	reverse_proxy keycloak:8080
+}

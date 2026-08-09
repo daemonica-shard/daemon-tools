@@ -17,6 +17,10 @@ services:
   mcp:
     image: ghcr.io/${GHCR_OWNER}/daemon-tools-mcp:prod
     restart: unless-stopped
+    environment:
+      # Both set = the Google-sign-in tier is on. Unset them for API-keys-only.
+      OIDC_ISSUER: https://auth.${DOMAIN}/realms/${KC_REALM}
+      PUBLIC_URL: https://mcp.${DOMAIN}
     volumes:
       - ./config/prod:/config:ro
       - mcp_data:/data
@@ -29,6 +33,9 @@ services:
   mcp-dev:
     image: ghcr.io/${GHCR_OWNER}/daemon-tools-mcp:dev
     restart: unless-stopped
+    environment:
+      OIDC_ISSUER: https://auth.${DOMAIN}/realms/${KC_REALM}
+      PUBLIC_URL: https://dev.mcp.${DOMAIN}
     volumes:
       - ./config/dev:/config:ro
       - mcp_dev_data:/data
@@ -38,8 +45,46 @@ services:
       timeout: 5s
       retries: 3
 
+  # Authorization server for the Google-sign-in tier. Keycloak federates login to Google
+  # and issues the tokens our MCP servers verify; they never see Google directly.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    restart: unless-stopped
+    command: start
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      # Caddy terminates TLS, so Keycloak speaks plain HTTP behind it — but it must know
+      # its public URL or it will mint redirect URIs pointing at the container.
+      KC_HOSTNAME: https://auth.${DOMAIN}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+  keycloak-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD}
+    volumes:
+      - keycloak_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   caddy_data:
   caddy_config:
   mcp_data:
   mcp_dev_data:
+  keycloak_db:

@@ -261,6 +261,123 @@ claude mcp add --transport http <name> https://mcp.DOMAIN/<tenant>/mcp \
 
 ---
 
+## 13. Keycloak — the Google-sign-in tier (optional)
+
+Only needed for non-engineers. API keys work without any of this, and the MCP server ignores
+OIDC entirely unless `OIDC_ISSUER` and `PUBLIC_URL` are both set.
+
+Keycloak is the **authorization server**; our MCP servers are only resource servers that verify
+its tokens. We never touch Google directly — Keycloak federates that.
+
+### 13.1 DNS + secrets
+
+Add a fourth A record: `auth` → `SERVER_IP`. Then in `.env`:
+
+```sh
+KC_REALM=daemonica
+KC_ADMIN_USER=admin
+KC_ADMIN_PASSWORD=$(openssl rand -base64 24)     # your login to the Keycloak admin console
+KC_DB_PASSWORD=$(openssl rand -base64 32)        # Keycloak ↔ Postgres only, never typed by a human
+```
+
+`KC_ADMIN_*` is a **bootstrap** account. After first login, create a real admin user in the
+master realm and disable this one — the admin console is internet-facing.
+
+### 13.2 Google OAuth client
+
+Google Cloud Console → **APIs & Services → Credentials → Create OAuth client ID → Web
+application**. Authorized redirect URI:
+
+```
+https://auth.DOMAIN/realms/KC_REALM/broker/google/endpoint
+```
+
+Any Google account can create this. On the consent screen, **User Type**:
+
+- **Internal** — only available with Google Workspace; restricted to your org, no verification.
+- **External** — required for personal Gmail. Publish it rather than leaving it in *Testing*:
+  testing-mode refresh tokens expire after 7 days, so users would re-authenticate weekly.
+  Publishing is not gated on Google's review process for basic `email`/`profile` scopes —
+  verification applies to sensitive and restricted scopes, which we don't request.
+
+Google only proves *who* someone is. Whether they get in is decided by `allow_emails` in
+`tenants.yaml`, so a permissive Google config is fine.
+
+### 13.3 Start it
+
+```sh
+docker compose up -d keycloak-db keycloak
+docker compose logs -f keycloak      # first boot runs schema migrations, ~30s
+```
+
+Then sign in at `https://auth.DOMAIN/admin`.
+
+### 13.4 Realm + Google identity provider
+
+1. Create a realm named to match `KC_REALM` — it becomes part of the issuer URL, so renaming it
+   later invalidates every connected client.
+2. **Identity Providers → Google** → paste the Client ID and Secret from 13.2.
+
+### 13.5 Audience binding — required, and easy to miss
+
+Keycloak does not implement the MCP spec's `resource` parameter, so tokens must be
+audience-bound through a scope instead. Without this, our servers reject every token (they
+verify `aud` against their own public URL).
+
+Per MCP host: **Client scopes → Create client scope** (e.g. `mcp:tools`, type *Optional*) →
+**Mappers → Configure a new mapper → Audience** → set **Included Custom Audience** to that
+host's URL:
+
+| Scope | Included Custom Audience |
+|-------|--------------------------|
+| for prod | `https://mcp.DOMAIN` |
+| for dev | `https://dev.mcp.DOMAIN` |
+
+### 13.6 Client registration for Claude
+
+MCP clients register themselves rather than being pre-created. Keycloak's own guidance for
+Claude: enable the CIMD feature (`--features=cimd` in the `command:` of the keycloak service),
+then **Realm Settings → Client Policies → Profiles → Create client profile** with the
+`client-id-metadata-document` executor, trusted domains `claude.ai`, `localhost`, `127.0.0.1`,
+and **Restrict same domain = OFF** (Claude uses localhost callbacks). Add a matching policy
+under the **Policies** tab with a `client-id-uri` condition.
+
+Older MCP revisions (2025-03-26) work with no client-registration setup at all, so if a client
+connects without this, nothing is wrong.
+
+### 13.7 Grant access, export, verify
+
+Add emails to the tenant in `config/prod/tenants.yaml`:
+
+```yaml
+tenants:
+  tapempire:
+    allow_emails:
+      - designer@example.com
+```
+
+then `docker compose restart mcp`.
+
+**Export the realm** so the database stays a cache rather than the only copy:
+
+```sh
+docker compose exec keycloak /opt/keycloak/bin/kc.sh export \
+  --dir /tmp/realm --realm KC_REALM
+docker compose cp keycloak:/tmp/realm ./config/keycloak-realm
+```
+
+Keep that with the rest of `config/` in your encrypted backup. Verify the metadata document
+points where it should:
+
+```sh
+curl https://mcp.DOMAIN/.well-known/oauth-protected-resource
+```
+
+Then add the connector in Claude Desktop or claude.ai using just the URL — the 401 carries
+`resource_metadata`, which is what makes the browser sign-in appear.
+
+---
+
 ## Afterwards
 
 - **Back up `config/` off the server, encrypted.** Everything else redeploys from git + GHCR;

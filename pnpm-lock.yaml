@@ -8,6 +8,21 @@ importers:
 
   .: {}
 
+  jobs/claude-usage:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.1)
+
   lib/firebase:
     dependencies:
       firebase-admin:
@@ -35,6 +50,9 @@ importers:
       express:
         specifier: ^4.21.0
         version: 4.22.2
+      jose:
+        specifier: ^5.9.6
+        version: 5.10.0
       yaml:
         specifier: ^2.6.0
         version: 2.9.0
@@ -1147,6 +1165,9 @@ packages:
 
   jose@4.15.9:
     resolution: {integrity: sha512-1vUQX+IdDMVPj4k8kOxgUqlcK518yluMuGZwqlr44FS1ppZB/5GWh4rZG89erpOBOJjU/OBsnCVFfapsRz6nEA==}
+
+  jose@5.10.0:
+    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
 
   jose@6.2.5:
     resolution: {integrity: sha512-2E5L2yRp03FnwreJLJX8/r7mHiZICCf8kG7fAsTWkSQTDAcc46NIZoQLKy+EJ8sPoJlxyS4OQR5H70LjIZZlIQ==}
@@ -2895,6 +2916,8 @@ snapshots:
   isexe@2.0.0: {}
 
   jose@4.15.9: {}
+
+  jose@5.10.0: {}
 
   jose@6.2.5: {}
 

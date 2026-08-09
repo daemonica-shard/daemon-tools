@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Nightly archive refresh. Replace REPO and HOME with absolute paths (see README). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.daemonica.claude-usage.archive</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>REPO/jobs/claude-usage/launchd/run.sh</string>
+	</array>
+
+	<!-- 03:10 is safe even on a laptop that sleeps: unlike cron, launchd runs a missed calendar
+	     interval once the machine wakes, rather than skipping it. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>10</integer>
+	</dict>
+
+	<!-- Also run immediately on load/login, so a fresh install archives without waiting a day. -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>HOME/Library/Logs/claude-usage.log</string>
+	<key>StandardErrorPath</key>
+	<string>HOME/Library/Logs/claude-usage.log</string>
+</dict>
+</plist>

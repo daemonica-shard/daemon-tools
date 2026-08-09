@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Weekly Telegram digest. Replace REPO and HOME with absolute paths (see README). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.daemonica.claude-usage.digest</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>REPO/jobs/claude-usage/launchd/run.sh</string>
+		<string>--digest</string>
+	</array>
+
+	<!-- Monday 09:00. Weekday 1 = Monday. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>1</integer>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+
+	<!-- Deliberately absent here: RunAtLoad would fire a Telegram message every login. -->
+
+	<key>StandardOutPath</key>
+	<string>HOME/Library/Logs/claude-usage.log</string>
+	<key>StandardErrorPath</key>
+	<string>HOME/Library/Logs/claude-usage.log</string>
+</dict>
+</plist>

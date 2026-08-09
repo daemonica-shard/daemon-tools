@@ -34,11 +34,16 @@ function jwksFor(issuer: string): { get: () => Promise<JWTVerifyGetKey> } {
 
 // Verifies an access token issued by the OIDC provider and returns the caller's email.
 // Returns null for anything invalid: the caller decides how to report it.
-export function createOidcVerifier(issuer: string): OidcVerifier {
+//
+// `audience` must match this server's public URL. Keycloak does not implement the MCP
+// spec's `resource` parameter, so audience binding comes from a client scope carrying an
+// Audience mapper (see deploy/SETUP.md). Verifying it is what stops a token minted for
+// another service in the same realm from being replayed here.
+export function createOidcVerifier(issuer: string, audience: string): OidcVerifier {
   const jwks = jwksFor(issuer);
   return async (token) => {
     try {
-      const { payload } = await jwtVerify(token, await jwks.get(), { issuer });
+      const { payload } = await jwtVerify(token, await jwks.get(), { issuer, audience });
       const email = typeof payload.email === "string" ? payload.email : null;
       if (!email) return null;
       return { email: email.toLowerCase(), subject: String(payload.sub ?? "") };

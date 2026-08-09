@@ -25,7 +25,9 @@ export function createApp(
   });
 
   const oidcEnabled = Boolean(options.oidcIssuer && options.publicUrl);
-  const verifyOidc = oidcEnabled ? createOidcVerifier(options.oidcIssuer!) : undefined;
+  const verifyOidc = oidcEnabled
+    ? createOidcVerifier(options.oidcIssuer!, options.publicUrl!)
+    : undefined;
 
   if (oidcEnabled) {
     const metadata = protectedResourceMetadata(options.publicUrl!, options.oidcIssuer!);

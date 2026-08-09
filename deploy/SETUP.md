@@ -189,13 +189,18 @@ chmod 644 config/*/tenants.yaml            # hashes only, not secret
 
 ## 9. DNS
 
-Three A records at the registrar, all → `SERVER_IP`, lowest available TTL while setting up:
+A records at the registrar, all → `SERVER_IP`, lowest available TTL while setting up. Caddy asks
+Let's Encrypt for a certificate per hostname on first request, so a name that does not resolve is a
+service that never starts serving:
 
-| Type | Host | Value |
-|------|---------|-------------|
-| A | `@` | `SERVER_IP` |
-| A | `mcp` | `SERVER_IP` |
-| A | `dev.mcp` | `SERVER_IP` |
+| Type | Host | Value | For |
+|------|---------|-------------|-----|
+| A | `@` | `SERVER_IP` | landing page |
+| A | `mcp` | `SERVER_IP` | MCP (prod) |
+| A | `dev.mcp` | `SERVER_IP` | MCP (dev) |
+| A | `auth` | `SERVER_IP` | Keycloak |
+| A | `grafana` | `SERVER_IP` | dashboards |
+| A | `otel` | `SERVER_IP` | metrics ingest |
 
 **Gotcha:** delete the registrar's default parking records first — Namecheap ships a URL Redirect
 Record on `@` and a `www` CNAME to its parking page, and a redirect record can't coexist with an A
@@ -271,7 +276,7 @@ its tokens. We never touch Google directly — Keycloak federates that.
 
 ### 13.1 DNS + secrets
 
-Add a fourth A record: `auth` → `SERVER_IP`. Then in `.env`:
+The `auth` A record from step 9 must resolve before Keycloak can get a certificate. Then in `.env`:
 
 ```sh
 KC_REALM=daemonica
@@ -375,6 +380,101 @@ curl https://mcp.DOMAIN/.well-known/oauth-protected-resource
 
 Then add the connector in Claude Desktop or claude.ai using just the URL — the 401 carries
 `resource_metadata`, which is what makes the browser sign-in appear.
+
+---
+
+## 14. Metrics — Prometheus + Grafana (optional)
+
+Claude Code can push token/cost telemetry over OTLP. Prometheus stores it; Grafana draws it. There
+is no collector in between — Prometheus ingests OTLP directly, so a collector would only forward.
+
+Worth being clear about what this is *not*: it measures **tokens**, while a Max plan is metered on
+rate-limit windows. `/usage` inside Claude Code remains the only authority on how much of your plan
+you have consumed. These two numbers will not agree and neither is wrong.
+
+It also only sees machines you configure, from the day you configure them. For history that already
+happened, `jobs/claude-usage` reads the local transcripts instead.
+
+### 14.1 DNS + secrets
+
+`grafana` and `otel` A records from step 9. Then in `.env`:
+
+```sh
+OTEL_INGEST_TOKEN=$(openssl rand -hex 32)        # one shared value, all clients
+GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24)
+GRAFANA_OIDC_SECRET=                             # filled in 14.2
+```
+
+### 14.2 Grafana client in Keycloak
+
+Requires step 13. **Clients → Create client**:
+
+| Field | Value |
+|-------|-------|
+| Client ID | `grafana` |
+| Client authentication | On (confidential) |
+| Valid redirect URIs | `https://grafana.DOMAIN/login/generic_oauth` |
+| Web origins | `https://grafana.DOMAIN` |
+
+**Credentials → Client secret** → paste into `GRAFANA_OIDC_SECRET`.
+
+Everyone who signs in lands as **Viewer**. Promote yourself with the local `admin` account
+(`https://grafana.DOMAIN/login` — the form is still there) → Administration → Users.
+
+### 14.3 Start
+
+```sh
+docker compose up -d prometheus grafana
+docker compose logs -f grafana        # provisioning errors surface here, not in the UI
+```
+
+### 14.4 Point Claude Code at it
+
+Per machine, in `~/.claude/settings.json` — so it applies to every session without touching shell
+profiles:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.DOMAIN/api/v1/otlp",
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer OTEL_INGEST_TOKEN",
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "false"
+  }
+}
+```
+
+Three settings that are load-bearing:
+
+- **Do not set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`.** Prometheus needs
+  cumulative counters; delta silently produces flat panels rather than an error.
+- **`OTEL_METRICS_INCLUDE_SESSION_ID=false`.** Session ID is unbounded — left on, every session
+  creates a permanent new time series and the database grows without limit.
+- **Leave `OTEL_LOG_USER_PROMPTS` unset.** It is off by default, and prompt text from a work
+  machine does not belong in a metrics store.
+
+### 14.5 Verify
+
+```sh
+# Unauthenticated ingest must be refused, and the query API must not be routed at all.
+curl -s -o /dev/null -w 'ingest without token: %{http_code}\n' https://otel.DOMAIN/api/v1/otlp/v1/metrics
+curl -s -o /dev/null -w 'query API: %{http_code}\n' https://otel.DOMAIN/api/v1/query?query=up
+```
+
+Both should be `401`. Then run a Claude Code session, wait one export interval (60s), and check the
+names actually landed:
+
+```sh
+docker compose exec prometheus wget -qO- \
+  'http://localhost:9090/api/v1/label/__name__/values' | tr ',' '\n' | grep claude
+```
+
+Expect `claude_code_token_usage_tokens_total` and friends. **If the names differ, fix the dashboard
+rather than assuming it is broken** — OTLP-to-Prometheus name translation (dots to underscores,
+unit appended, `_total` for counters) is the part most likely to shift between versions, and the
+dashboard in `deploy/grafana/provisioning/dashboards/` hardcodes the expected spelling.
 
 ---
 

@@ -8,6 +8,10 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      # Gates metrics ingest. `:?` because an *absent* value would expand to empty, and the
+      # Caddy matcher would then admit anyone sending a bare `Authorization: Bearer ` — a
+      # missing token must stop the stack, not quietly open the write path.
+      OTEL_INGEST_TOKEN: ${OTEL_INGEST_TOKEN:?OTEL_INGEST_TOKEN is required, see .env.example}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./landing:/srv/landing:ro
@@ -82,9 +86,60 @@ services:
       timeout: 5s
       retries: 5
 
+  # Metrics store. Claude Code pushes OTLP straight in — no collector in between, since a
+  # collector would only forward. Never published by Caddy except its OTLP write path.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # The whole point is history the transcripts no longer hold, so retain years, not days.
+      - --storage.tsdb.retention.time=3y
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+      # Login goes through the same Keycloak realm as the MCP servers, so who may see the
+      # dashboards is decided in exactly one place.
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: Daemonica
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: grafana
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_OIDC_SECRET}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid email profile
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/auth
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/userinfo
+      # Keycloak already decided who is allowed in; a second allowlist here would just be a
+      # place to forget to update.
+      GF_USERS_ALLOW_SIGN_UP: "true"
+      # Local admin login stays reachable on purpose: it is the way back in when an OIDC
+      # misconfiguration locks everyone out, and Keycloak is a dependency that can be down.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
 volumes:
   caddy_data:
   caddy_config:
   mcp_data:
   mcp_dev_data:
   keycloak_db:
+  prometheus_data:
+  grafana_data:

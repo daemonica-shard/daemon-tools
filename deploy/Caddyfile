@@ -15,3 +15,23 @@ dev.mcp.{$DOMAIN} {
 auth.{$DOMAIN} {
 	reverse_proxy keycloak:8080
 }
+
+grafana.{$DOMAIN} {
+	reverse_proxy grafana:3000
+}
+
+# Metrics ingest only. Prometheus' query API and UI are deliberately NOT routed here: the
+# ingest token would otherwise also grant read access to everything the server has recorded.
+# Grafana reads Prometheus over the internal network instead, where no token is involved.
+otel.{$DOMAIN} {
+	@ingest {
+		path /api/v1/otlp/*
+		header Authorization "Bearer {$OTEL_INGEST_TOKEN}"
+	}
+	handle @ingest {
+		reverse_proxy prometheus:9090
+	}
+	handle {
+		respond 401
+	}
+}

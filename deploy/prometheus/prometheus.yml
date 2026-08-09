@@ -1,0 +1,18 @@
+# Claude Code pushes metrics in over OTLP (enabled by --web.enable-otlp-receiver), so there is
+# nothing to scrape for usage data — no scrape_configs entry will ever mention a laptop.
+global:
+  scrape_interval: 60s
+
+# OTLP names are translated to Prometheus convention on ingest: dots become underscores, the
+# unit is appended, and counters gain _total. `claude_code.token.usage` (unit: tokens) therefore
+# arrives as `claude_code_token_usage_tokens_total`. Confirm the real names after first data:
+#   docker compose exec prometheus wget -qO- \
+#     'http://localhost:9090/api/v1/label/__name__/values' | tr ',' '\n' | grep claude
+otlp:
+  translation_strategy: UnderscoreEscapingWithSuffixes
+
+scrape_configs:
+  # Self-scrape, so the metrics store can answer whether it is itself healthy.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

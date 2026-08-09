@@ -4,8 +4,19 @@ import type { TenantConfig } from "./tenants.js";
 import { bearerAuth } from "./auth.js";
 import { AuditLog } from "./audit.js";
 import { buildMcpServer, buildTenantTools } from "./mcp.js";
+import { createOidcVerifier, protectedResourceMetadata } from "./oidc.js";
 
-export function createApp(tenants: TenantConfig[], audit: AuditLog): express.Express {
+export interface AppOptions {
+  // Both required to enable the Google-sign-in tier; omit for API-keys-only.
+  oidcIssuer?: string;
+  publicUrl?: string;
+}
+
+export function createApp(
+  tenants: TenantConfig[],
+  audit: AuditLog,
+  options: AppOptions = {},
+): express.Express {
   const app = express();
   app.use(express.json({ limit: "4mb" }));
 
@@ -13,12 +24,30 @@ export function createApp(tenants: TenantConfig[], audit: AuditLog): express.Exp
     res.json({ ok: true });
   });
 
+  const oidcEnabled = Boolean(options.oidcIssuer && options.publicUrl);
+  const verifyOidc = oidcEnabled ? createOidcVerifier(options.oidcIssuer!) : undefined;
+
+  if (oidcEnabled) {
+    const metadata = protectedResourceMetadata(options.publicUrl!, options.oidcIssuer!);
+    // Clients look for this either at the well-known root or with the resource path
+    // appended, depending on how they derive the URL. Serve both.
+    const serve: express.RequestHandler = (_req, res) => res.json(metadata);
+    app.get("/.well-known/oauth-protected-resource", serve);
+    app.get("/.well-known/oauth-protected-resource/*", serve);
+  }
+
   for (const tenant of tenants) {
     const path = `/${tenant.id}/mcp`;
+    const authOptions = {
+      verifyOidc,
+      resourceMetadataUrl: oidcEnabled
+        ? `${options.publicUrl}/.well-known/oauth-protected-resource${path}`
+        : undefined,
+    };
     // Long-lived per-tenant state (Firebase clients, caches) — shared across requests.
     const tools = buildTenantTools(tenant);
 
-    app.post(path, bearerAuth(tenant, audit), async (req, res) => {
+    app.post(path, bearerAuth(tenant, audit, authOptions), async (req, res) => {
       const identity = res.locals.identity as string;
       const body = req.body;
 
@@ -67,8 +96,8 @@ export function createApp(tenants: TenantConfig[], audit: AuditLog): express.Exp
         id: null,
       });
     };
-    app.get(path, bearerAuth(tenant, audit), methodNotAllowed);
-    app.delete(path, bearerAuth(tenant, audit), methodNotAllowed);
+    app.get(path, bearerAuth(tenant, audit, authOptions), methodNotAllowed);
+    app.delete(path, bearerAuth(tenant, audit, authOptions), methodNotAllowed);
   }
 
   return app;

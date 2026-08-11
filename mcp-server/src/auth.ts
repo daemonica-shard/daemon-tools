@@ -35,8 +35,11 @@ export function bearerAuth(tenant: TenantConfig, audit: AuditLog, options: AuthO
     // A JWT can never match a key hash, so trying OIDC second costs nothing.
     if (!identity && token && options.verifyOidc) {
       const user = await options.verifyOidc(token);
-      // A valid token still only gets in if this tenant lists the email.
-      if (user && tenant.allow_emails.includes(user.email)) identity = user.email;
+      // A valid token still only gets in if this tenant lists the email. Compare
+      // case-insensitively: the token's address is normalised, a hand-edited YAML entry isn't.
+      const allowed =
+        user && tenant.allow_emails.some((e) => e.toLowerCase() === user.email);
+      if (allowed && user) identity = user.email;
     }
 
     if (!identity) {

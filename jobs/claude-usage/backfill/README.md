@@ -41,12 +41,16 @@ docker volume ls | grep prometheus          # confirm the volume name (project p
 
 docker compose stop prometheus
 docker run --rm \
+  --entrypoint promtool \
   -v /opt/daemon-tools/archive.om:/tmp/archive.om:ro \
   -v daemon-tools_prometheus_data:/prometheus \
   prom/prometheus:v3.1.0 \
-  promtool tsdb create-blocks-from openmetrics /tmp/archive.om /prometheus
+  tsdb create-blocks-from openmetrics /tmp/archive.om /prometheus
 docker compose start prometheus
 ```
+
+`--entrypoint promtool` is required: the image's entrypoint is `prometheus`, so passing `promtool`
+as a command argument gets handed to the server instead (`unexpected promtool`).
 
 The one-off container runs as the image's own `nobody` user, so the blocks it writes are owned by
 the same uid Prometheus runs as — don't add `--user root`, or Prometheus will fail to read what it

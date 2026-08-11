@@ -420,7 +420,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (type) (claude_usage_archive_daily_tokens)",
+          "expr": "sum by (type) (last_over_time(claude_usage_archive_daily_tokens[1d]))",
           "interval": "1d",
           "legendFormat": "{{type}} (archive)"
         },
@@ -473,7 +473,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(claude_usage_archive_daily_cost_USD)",
+          "expr": "sum(last_over_time(claude_usage_archive_daily_cost_USD[1d]))",
           "interval": "1d",
           "legendFormat": "archive"
         },

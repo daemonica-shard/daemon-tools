@@ -340,15 +340,19 @@ host's URL:
 
 ### 13.6 Client registration for Claude
 
-MCP clients register themselves rather than being pre-created. Keycloak's own guidance for
-Claude: enable the CIMD feature (`--features=cimd` in the `command:` of the keycloak service),
-then **Realm Settings → Client Policies → Profiles → Create client profile** with the
-`client-id-metadata-document` executor, trusted domains `claude.ai`, `localhost`, `127.0.0.1`,
-and **Restrict same domain = OFF** (Claude uses localhost callbacks). Add a matching policy
-under the **Policies** tab with a `client-id-uri` condition.
+MCP clients register themselves rather than being pre-created, since nobody hands a designer a
+client ID. Keycloak supports MCP 2025-03-26 with **no registration setup at all**, so try
+connecting a client before configuring anything here — you may not need it.
 
-Older MCP revisions (2025-03-26) work with no client-registration setup at all, so if a client
-connects without this, nothing is wrong.
+If a client fails at the registration step, the mechanism is Dynamic Client Registration
+(RFC 7591), which Keycloak has supported for years: **Realm Settings → Client registration →
+Anonymous access policies**. Loosen those policies only as far as a client actually requires.
+
+**Not available on 26.4:** Keycloak's MCP guide also describes Client ID Metadata Document
+(CIMD) registration behind `--features=cimd`. That flag does not exist in 26.4 — passing it
+makes Keycloak refuse to start with `cimd is an unrecognized feature`. It belongs to a later
+release; check `--features=help` for what the running version actually offers before enabling
+anything from that guide.
 
 ### 13.7 Grant access, export, verify
 

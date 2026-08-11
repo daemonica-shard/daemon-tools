@@ -101,6 +101,13 @@ services:
       # The whole point is history the transcripts no longer hold, so retain years, not days.
       - --storage.tsdb.retention.time=3y
       - --web.enable-otlp-receiver
+      # Claude Code exports counters with delta temporality and ignores
+      # OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative, so Prometheus' native OTLP
+      # receiver drops every counter it sends ("invalid temporality and type combination") while
+      # letting the non-counter metrics through — which looks like partial success. This converts
+      # delta to cumulative on ingest instead of rejecting it. Experimental, and the conversion
+      # state is in memory: a Prometheus restart shows up as a counter reset.
+      - --enable-feature=otlp-deltatocumulative
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus

@@ -354,6 +354,24 @@ makes Keycloak refuse to start with `cimd is an unrecognized feature`. It belong
 release; check `--features=help` for what the running version actually offers before enabling
 anything from that guide.
 
+### 13.6b Login theme (only the Google button)
+
+There is no built-in switch for "show the identity providers but not the username/password
+form" — the IdP buttons are rendered *by* the login form template, so disabling the `forms`
+execution removes the entire page rather than just the fields. Keycloak's documented answer is
+a custom theme, and `deploy/keycloak/themes/daemonica/` is one: it inherits the stock login
+theme and adds a stylesheet that hides the form.
+
+Purely cosmetic, and legitimately so: no local users exist in this realm, so the password form
+could never authenticate anyone in the first place.
+
+Enable it under **Realm Settings → Themes → Login theme → `daemonica`**. Themes are cached in
+production mode, so after editing the CSS run `docker compose restart keycloak`.
+
+The alternative — **Authentication → Flows → browser → Identity Provider Redirector →
+Default Identity Provider = `google`** — skips the page entirely and goes straight to Google.
+Fewer clicks for the user, but no branding and no provider choice if you ever add a second one.
+
 ### 13.7 Grant access, export, verify
 
 Add emails to the tenant in `config/prod/tenants.yaml`:

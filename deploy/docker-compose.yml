@@ -67,6 +67,10 @@ services:
       KC_PROXY_HEADERS: xforwarded
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+    volumes:
+      # Selected per realm under Realm Settings → Themes → Login theme. Themes are cached in
+      # production mode, so edits need a `docker compose restart keycloak` to appear.
+      - ./keycloak/themes:/opt/keycloak/themes:ro
     depends_on:
       keycloak-db:
         condition: service_healthy

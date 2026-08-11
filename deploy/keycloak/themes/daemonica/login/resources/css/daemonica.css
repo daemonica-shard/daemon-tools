@@ -1,0 +1,20 @@
+/* Identity comes from Google only — no local users exist in this realm, so the
+   username/password form is dead weight that just adds a decision. The IdP buttons are
+   rendered by the same template, which is why this is CSS rather than a flow change:
+   disabling the forms execution would remove the whole page, buttons included. */
+#kc-form-login,
+#kc-registration,
+#kc-registration-container,
+#kc-form-options {
+  display: none;
+}
+
+/* The divider and "or" label only make sense when there are two ways in. */
+#kc-social-providers hr,
+#kc-social-providers h2 {
+  display: none;
+}
+
+#kc-social-providers {
+  margin-top: 0;
+}

@@ -31,19 +31,28 @@ export function bearerAuth(tenant: TenantConfig, audit: AuditLog, options: AuthO
     const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
 
     let identity: string | null = token ? findKeyName(tenant, token) : null;
+    let reason = token ? "unknown_key" : "no_token";
+    let email: string | undefined;
 
-    // A JWT can never match a key hash, so trying OIDC second costs nothing.
-    if (!identity && token && options.verifyOidc) {
-      const user = await options.verifyOidc(token);
-      // A valid token still only gets in if this tenant lists the email. Compare
-      // case-insensitively: the token's address is normalised, a hand-edited YAML entry isn't.
-      const allowed =
-        user && tenant.allow_emails.some((e) => e.toLowerCase() === user.email);
-      if (allowed && user) identity = user.email;
+    // Only try OIDC on something shaped like a JWT. Otherwise a mistyped API key gets reported
+    // as a malformed token, which sends whoever reads the log looking at the wrong tier.
+    const looksLikeJwt = token.split(".").length === 3;
+    if (!identity && token && looksLikeJwt && options.verifyOidc) {
+      const result = await options.verifyOidc(token);
+      if (!result.ok) {
+        reason = result.reason;
+      } else {
+        email = result.user.email;
+        // A valid token still only gets in if this tenant lists the email. Compare
+        // case-insensitively: the token's address is normalised, a hand-edited YAML entry isn't.
+        const allowed = tenant.allow_emails.some((e) => e.toLowerCase() === email);
+        if (allowed) identity = email;
+        else reason = "not_allowlisted";
+      }
     }
 
     if (!identity) {
-      void audit.write({ event: "auth_denied", tenant: tenant.id, identity: null });
+      void audit.write({ event: "auth_denied", tenant: tenant.id, identity: null, reason, email });
       const challenge = options.resourceMetadataUrl
         ? `Bearer realm="daemon-tools", resource_metadata="${options.resourceMetadataUrl}"`
         : 'Bearer realm="daemon-tools"';

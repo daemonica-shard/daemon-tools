@@ -7,6 +7,11 @@ export interface AuditEvent {
   identity: string | null;
   tool?: string;
   args?: unknown;
+  // auth_denied only: why. Never the token itself — the log is readable by anyone with the box.
+  reason?: string;
+  // The email a rejected OIDC token carried, when it got far enough to have one. Makes an
+  // allowlist miss self-explanatory instead of requiring a token to be decoded by hand.
+  email?: string;
 }
 
 export class AuditLog {

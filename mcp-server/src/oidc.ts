@@ -5,7 +5,35 @@ export interface OidcUser {
   subject: string;
 }
 
-export type OidcVerifier = (token: string) => Promise<OidcUser | null>;
+// Every rejection carries why. Without this, a bad signature, a stale issuer, a missing audience
+// mapper and an unmapped email claim are indistinguishable in the audit log — which turns a
+// misconfiguration into a bisect instead of a lookup.
+export type OidcResult = { ok: true; user: OidcUser } | { ok: false; reason: string };
+
+export type OidcVerifier = (token: string) => Promise<OidcResult>;
+
+// jose reports failures by error code. `claim` separates the two that matter most in practice:
+// iss means the realm or issuer URL moved; aud means the Audience mapper isn't reaching this host.
+function reasonFor(err: unknown): string {
+  const e = err as { code?: string; claim?: string };
+  switch (e?.code) {
+    case "ERR_JWT_EXPIRED":
+      return "token_expired";
+    case "ERR_JWS_SIGNATURE_VERIFICATION_FAILED":
+      return "bad_signature";
+    case "ERR_JWT_CLAIM_VALIDATION_FAILED":
+      if (e.claim === "aud") return "wrong_audience";
+      if (e.claim === "iss") return "wrong_issuer";
+      return `bad_claim_${e.claim ?? "unknown"}`;
+    case "ERR_JWS_INVALID":
+    case "ERR_JWT_INVALID":
+      return "malformed_token";
+    default:
+      // Discovery and JWKS fetch failures land here: the provider being unreachable, rather than
+      // the caller presenting something wrong.
+      return "verification_failed";
+  }
+}
 
 // Discovery rather than a hardcoded certs path, so any OIDC provider works and key
 // rotation is handled by jose's JWKS cache.
@@ -32,8 +60,8 @@ function jwksFor(issuer: string): { get: () => Promise<JWTVerifyGetKey> } {
   };
 }
 
-// Verifies an access token issued by the OIDC provider and returns the caller's email.
-// Returns null for anything invalid: the caller decides how to report it.
+// Verifies an access token issued by the OIDC provider and returns the caller's email, or the
+// reason it was rejected. The caller decides how to report it.
 //
 // `audience` must match this server's public URL. Keycloak does not implement the MCP
 // spec's `resource` parameter, so audience binding comes from a client scope carrying an
@@ -45,10 +73,12 @@ export function createOidcVerifier(issuer: string, audience: string): OidcVerifi
     try {
       const { payload } = await jwtVerify(token, await jwks.get(), { issuer, audience });
       const email = typeof payload.email === "string" ? payload.email : null;
-      if (!email) return null;
-      return { email: email.toLowerCase(), subject: String(payload.sub ?? "") };
-    } catch {
-      return null;
+      // A valid token with no email means the provider isn't mapping the claim through — a
+      // configuration problem at the IdP, not a bad caller.
+      if (!email) return { ok: false, reason: "no_email_claim" };
+      return { ok: true, user: { email: email.toLowerCase(), subject: String(payload.sub ?? "") } };
+    } catch (err) {
+      return { ok: false, reason: reasonFor(err) };
     }
   };
 }

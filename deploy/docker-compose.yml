@@ -132,9 +132,18 @@ services:
       GF_AUTH_GENERIC_OAUTH_AUTH_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/auth
       GF_AUTH_GENERIC_OAUTH_TOKEN_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/token
       GF_AUTH_GENERIC_OAUTH_API_URL: https://auth.${DOMAIN}/realms/${KC_REALM}/protocol/openid-connect/userinfo
-      # Keycloak already decided who is allowed in; a second allowlist here would just be a
-      # place to forget to update.
-      GF_USERS_ALLOW_SIGN_UP: "true"
+      # Keycloak authenticates ANY Google account and auto-creates a realm user — it proves
+      # identity, it does not authorise. So Grafana must require a role, or the dashboards are
+      # open to anyone on the internet who finds the hostname.
+      # STRICT denies login outright when no role matches, rather than falling back to a default.
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(realm_access.roles[*], 'grafana-admin') && 'Admin' || contains(realm_access.roles[*], 'grafana-viewer') && 'Viewer'"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "true"
+      # OAuth users are still created on first login — gated by the role above.
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      # ...but Grafana's own signup form is not a way in. This is separate from the OAuth
+      # setting above, and left on it lets strangers create local accounts with no Keycloak
+      # involvement whatsoever.
+      GF_USERS_ALLOW_SIGN_UP: "false"
       # Local admin login stays reachable on purpose: it is the way back in when an OIDC
       # misconfiguration locks everyone out, and Keycloak is a dependency that can be down.
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}

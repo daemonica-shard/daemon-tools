@@ -1,14 +1,14 @@
 {
   "uid": "claude-code-usage",
   "title": "Claude Code usage",
-  "description": "Token and cost usage pushed from Claude Code over OTLP. Counters are cumulative; do not set OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta or these panels go flat.",
+  "description": "Token and cost usage pushed from Claude Code over OTLP. Queries deliberately avoid increase()/rate(): model, effort and query_source are labels, so every model switch starts a new short-lived series, and increase() extrapolates those to the full window \u2014 which read $344 against $8 of real data. Totals use last_over_time (a delta-derived counter's last value is its lifetime total); per-day panels use max-min within the day.",
   "tags": [
     "claude",
     "usage"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "5m",
   "time": {
     "from": "now-30d",
@@ -72,7 +72,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_token_usage_tokens_total{model=~\"$model\"}[$__range]))",
+          "expr": "sum(last_over_time(claude_code_token_usage_tokens_total{model=~\"$model\"}[$__range]))",
           "instant": true
         }
       ]
@@ -113,7 +113,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_cost_usage_USD_total[$__range]))",
+          "expr": "sum(last_over_time(claude_code_cost_usage_USD_total[$__range]))",
           "instant": true
         }
       ]
@@ -154,7 +154,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_session_count_total[$__range]))",
+          "expr": "sum(last_over_time(claude_code_session_count_total[$__range]))",
           "instant": true
         }
       ]
@@ -196,7 +196,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_token_usage_tokens_total{type=\"output\",model=~\"$model\"}[$__range]))",
+          "expr": "sum(last_over_time(claude_code_token_usage_tokens_total{type=\"output\",model=~\"$model\"}[$__range]))",
           "instant": true
         }
       ]
@@ -241,7 +241,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{model=~\"$model\"}[1d]))",
+          "expr": "sum by (type) ((max_over_time(claude_code_token_usage_tokens_total{model=~\"$model\"}[1d]) - min_over_time(claude_code_token_usage_tokens_total{model=~\"$model\"}[1d])))",
           "interval": "1d",
           "legendFormat": "{{type}}"
         }
@@ -287,7 +287,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (model) (increase(claude_code_token_usage_tokens_total{type=\"output\",model=~\"$model\"}[1d]))",
+          "expr": "sum by (model) ((max_over_time(claude_code_token_usage_tokens_total{type=\"output\",model=~\"$model\"}[1d]) - min_over_time(claude_code_token_usage_tokens_total{type=\"output\",model=~\"$model\"}[1d])))",
           "interval": "1d",
           "legendFormat": "{{model}}"
         }
@@ -327,7 +327,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_cost_usage_USD_total[1d]))",
+          "expr": "sum((max_over_time(claude_code_cost_usage_USD_total[1d]) - min_over_time(claude_code_cost_usage_USD_total[1d])))",
           "interval": "1d",
           "legendFormat": "cost"
         }
@@ -373,7 +373,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (type) (increase(claude_code_lines_of_code_count_total[1d]))",
+          "expr": "sum by (type) ((max_over_time(claude_code_lines_of_code_count_total[1d]) - min_over_time(claude_code_lines_of_code_count_total[1d])))",
           "interval": "1d",
           "legendFormat": "{{type}}"
         }
@@ -426,7 +426,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total[1d]))",
+          "expr": "sum by (type) ((max_over_time(claude_code_token_usage_tokens_total[1d]) - min_over_time(claude_code_token_usage_tokens_total[1d])))",
           "interval": "1d",
           "legendFormat": "{{type}} (live)"
         }
@@ -479,7 +479,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum(increase(claude_code_cost_usage_USD_total[1d]))",
+          "expr": "sum((max_over_time(claude_code_cost_usage_USD_total[1d]) - min_over_time(claude_code_cost_usage_USD_total[1d])))",
           "interval": "1d",
           "legendFormat": "live"
         }
@@ -526,7 +526,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_active_time_seconds_total[1d]))",
+          "expr": "sum((max_over_time(claude_code_active_time_seconds_total[1d]) - min_over_time(claude_code_active_time_seconds_total[1d])))",
           "interval": "1d",
           "legendFormat": "active time"
         }

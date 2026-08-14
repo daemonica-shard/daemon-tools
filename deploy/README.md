@@ -30,6 +30,38 @@ docker compose up -d
 DNS at the registrar: A records for `@`, `mcp`, `dev.mcp` → server IP. Caddy fetches TLS
 certificates automatically once DNS resolves.
 
+## Updating a config file: use `rsync --inplace`
+
+```sh
+rsync -av --inplace deploy/prometheus/prometheus.yml USER@SERVER:/opt/daemon-tools/prometheus/prometheus.yml
+```
+
+**`--inplace` is not optional here, and leaving it off fails silently.** `Caddyfile` and
+`prometheus.yml` are bind-mounted as *single files*, and Docker resolves a single-file mount to an
+inode when the container starts. Plain `rsync` writes a temp file and renames it over the target, so
+the host directory gets a **new** inode while the container stays attached to the old one. The
+container then reads the pre-edit file forever, and nothing anywhere reports a problem: `cat` on the
+host shows your change, the config reload logs success, and the setting simply never takes effect.
+`--inplace` writes through the existing inode, so the container sees it.
+
+This bit us once already — a `prometheus.yml` change reloaded "successfully" three times against the
+stale file. To confirm what the container actually has, ask the container, not the host:
+
+```sh
+docker compose exec prometheus grep out_of_order /etc/prometheus/prometheus.yml
+```
+
+If a mount is already orphaned, `--inplace` cannot reattach it — only recreating the container can:
+
+```sh
+docker compose up -d --force-recreate prometheus   # `restart` is NOT enough; it keeps the old mount
+```
+
+For Prometheus specifically, prefer to get it right in one pass: recreating drops the in-memory
+delta-to-cumulative state and shows up as a counter reset on the live Grafana panels, whereas
+`--inplace` + `docker compose kill -s SIGHUP prometheus` applies the change with no restart at all.
+Directory mounts (`./keycloak/themes`, `./landing`) are immune — the trap is single files only.
+
 ## Config layout (server-only, never in git)
 
 ```

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { load, merge, save } from "./archive.js";
 import { fetchDaily } from "./ccusage.js";
 import { compact, formatDigest, sum } from "./digest.js";
-import { sendTelegram } from "./notify.js";
+import { configFromEnv, send } from "@daemon-tools/notify";
 
 const USAGE = `claude-usage — archive Claude Code token usage before the transcripts are pruned
 
@@ -77,7 +77,9 @@ async function main(): Promise<void> {
     console.log(`\n${text}`);
     return;
   }
-  console.log(await sendTelegram(text) ? "digest sent to Telegram" : "digest skipped (Telegram secrets unset)");
+  const results = await send(text, configFromEnv());
+  const delivered = results.filter((r) => r.sent).map((r) => r.channel);
+  console.log(delivered.length ? `digest sent to ${delivered.join(", ")}` : "digest skipped (no channel configured)");
 }
 
 main().catch((err: unknown) => {

@@ -9,6 +9,10 @@ importers:
   .: {}
 
   jobs/claude-usage:
+    dependencies:
+      '@daemon-tools/notify':
+        specifier: workspace:*
+        version: link:../../lib/notify
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
@@ -44,6 +48,18 @@ importers:
       firebase-admin:
         specifier: ^12.7.0
         version: 12.7.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.1)
+
+  lib/notify:
     devDependencies:
       '@types/node':
         specifier: ^22.9.0

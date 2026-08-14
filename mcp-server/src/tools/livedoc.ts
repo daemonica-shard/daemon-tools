@@ -7,9 +7,9 @@ import type { ToolInstance } from "../mcp.js";
 
 // Ported from the standalone LiveDoc server, parameterized per tenant: each tenant
 // brings its own Firebase project, service account, and features file.
+// Project and service account come from the tenant's `google:` block; only what is specific to
+// this tool lives here.
 const configSchema = z.object({
-  firebase_project: z.string(),
-  firebase_sa: z.string(),
   features_file: z.string().optional(),
   cache_ttl_seconds: z.number().int().positive().default(300),
 });
@@ -37,9 +37,11 @@ function asText(value: unknown) {
 
 export function createLivedoc(tenant: TenantConfig, rawConfig: Record<string, unknown>): ToolInstance {
   const config = configSchema.parse(rawConfig);
+  const google = tenant.google;
+  if (!google) throw new Error(`tenant ${tenant.id}: livedoc needs a google: block`);
   const client = new RemoteConfigClient({
-    projectId: config.firebase_project,
-    serviceAccountPath: config.firebase_sa,
+    projectId: google.project,
+    serviceAccountPath: google.service_account,
   });
   const cache = new TTLCache<unknown>(config.cache_ttl_seconds * 1000);
 

@@ -6,16 +6,19 @@
 tenants:
   tapempire:
     display: TapEmpire
+    # Shared by every Google-backed tool below. Kept here rather than per tool so the project and
+    # key cannot drift apart as more tools are added.
+    google:
+      project: my-project-id
+      service_account: /config/firebase/my-project-sa.json
+      location: me-central1        # BigQuery dataset region; only BigQuery-backed tools need it
     keys:
       example-dev: "0000000000000000000000000000000000000000000000000000000000000000"
     allow_emails: []
     tools:
       ping: {}
       # livedoc: Firebase Remote Config inspection (template, version history, tracked features).
-      # firebase_sa points to a service-account JSON on the SERVER (mounted, never in the repo).
       livedoc:
-        firebase_project: my-project-id
-        firebase_sa: /config/firebase/my-project-sa.json
         features_file: /config/features/my-project.yaml
         cache_ttl_seconds: 300
       # crashlytics: crash data via the Firebase → BigQuery export. `location` must match where
@@ -23,10 +26,7 @@ tenants:
       # that reads like a permissions error. Tables only exist once an error event has been
       # exported, so an empty list means no crashes yet, not a broken link.
       crashlytics:
-        project: my-project-id
-        service_account: /config/firebase/my-project-sa.json
         dataset: firebase_crashlytics
-        location: me-central1
         cache_ttl_seconds: 300
 
   daemonica/sway:

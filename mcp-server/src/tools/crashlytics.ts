@@ -4,13 +4,10 @@ import { TTLCache } from "@daemon-tools/firebase";
 import type { TenantConfig } from "../tenants.js";
 import type { ToolInstance } from "../mcp.js";
 
+// Project and service account come from the tenant's `google:` block; only what is specific to
+// this tool lives here.
 const configSchema = z.object({
-  project: z.string(),
-  service_account: z.string(),
   dataset: z.string().default("firebase_crashlytics"),
-  // Must match where the export was created — BigQuery defaults to US and a mismatch fails with
-  // a "not found" that looks like a permissions problem.
-  location: z.string(),
   cache_ttl_seconds: z.number().int().positive().default(300),
 });
 
@@ -24,20 +21,25 @@ function asText(value: unknown) {
 }
 
 export function createCrashlytics(
-  _tenant: TenantConfig,
+  tenant: TenantConfig,
   rawConfig: Record<string, unknown>,
 ): ToolInstance {
   const config = configSchema.parse(rawConfig);
+  const google = tenant.google;
+  if (!google) throw new Error(`tenant ${tenant.id}: crashlytics needs a google: block`);
+  if (!google.location) {
+    throw new Error(`tenant ${tenant.id}: crashlytics needs google.location (BigQuery region)`);
+  }
   const client = new BigQueryClient({
-    projectId: config.project,
-    serviceAccountPath: config.service_account,
-    location: config.location,
+    projectId: google.project,
+    serviceAccountPath: google.service_account,
+    location: google.location,
   });
   const cache = new TTLCache<unknown>(config.cache_ttl_seconds * 1000);
 
   const qualified = (table: string) => {
     if (!TABLE_RE.test(table)) throw new Error(`invalid table name: ${table}`);
-    return `\`${config.project}.${config.dataset}.${table}\``;
+    return `\`${google.project}.${config.dataset}.${table}\``;
   };
 
   return {

@@ -1,34 +1,47 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { load, merge, save } from "./archive.js";
 import { fetchDaily } from "./ccusage.js";
 import { compact, formatDigest, sum } from "./digest.js";
 import { configFromEnv, send } from "@daemon-tools/notify";
+import { localDate, publish } from "./publish.js";
 
 const USAGE = `claude-usage — archive Claude Code token usage before the transcripts are pruned
 
-  claude-usage                 refresh the archive (nightly)
-  claude-usage --digest        refresh, then post a summary to Telegram (weekly)
+  claude-usage                 refresh the archive, publish finished days (nightly)
+  claude-usage --digest        also post a summary to Telegram (weekly)
 
 Options:
   --days N        digest window in days (default 7)
   --archive PATH  archive location (default ~/.claude-usage/archive.json,
                   or $CLAUDE_USAGE_ARCHIVE)
   --dry-run       print the digest instead of sending it
+  --no-publish    refresh the archive only, do not push to Prometheus
+  --publish-since YYYY-MM-DD
+                  publish from this day on, for a deliberate catch-up. Only days
+                  Prometheus does not already hold — the dashboard's totals sum every
+                  sample in range, so a day sent twice is counted twice.
   -h, --help      this message
 `;
+
+// Must match storage.tsdb.out_of_order_time_window in deploy/prometheus/prometheus.yml. Days older
+// than Prometheus will accept are reported and skipped, rather than sent to fail the whole batch.
+const WINDOW_DAYS = 7;
+
 
 interface Options {
   digest: boolean;
   days: number;
   archivePath: string;
   dryRun: boolean;
+  publish: boolean;
+  publishSince?: string;
 }
 
 function parseArgs(argv: string[]): Options {
   const defaultPath = process.env.CLAUDE_USAGE_ARCHIVE ?? join(homedir(), ".claude-usage", "archive.json");
-  const options: Options = { digest: false, days: 7, archivePath: defaultPath, dryRun: false };
+  const options: Options = { digest: false, days: 7, archivePath: defaultPath, dryRun: false, publish: true };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -47,6 +60,13 @@ function parseArgs(argv: string[]): Options {
         break;
       }
       case "--archive": options.archivePath = next(); break;
+      case "--no-publish": options.publish = false; break;
+      case "--publish-since": {
+        const since = next();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new Error("--publish-since must be YYYY-MM-DD");
+        options.publishSince = since;
+        break;
+      }
       case "-h": case "--help": process.stdout.write(USAGE); process.exit(0);
       default: throw new Error(`unknown argument: ${arg}`);
     }
@@ -56,7 +76,7 @@ function parseArgs(argv: string[]): Options {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
 
   const before = await load(options.archivePath);
   const after = merge(before, await fetchDaily(), new Date().toISOString());
@@ -69,6 +89,21 @@ async function main(): Promise<void> {
     `archived ${totals.days} days (${added >= 0 ? "+" : ""}${added} new), ` +
       `${compact(totals.totalTokens)} tokens, $${totals.totalCost.toFixed(2)} → ${options.archivePath}`,
   );
+
+  // After the archive is safely on disk: publishing is the recoverable half (the next run retries
+  // whatever Prometheus did not take), while a lost archive write is not recoverable at all.
+  if (options.publish) {
+    const statePath = join(dirname(options.archivePath), "published.json");
+    console.log(
+      await publish(after, {
+        statePath,
+        today,
+        windowDays: WINDOW_DAYS,
+        since: options.publishSince,
+        now: new Date().toISOString(),
+      }),
+    );
+  }
 
   if (!options.digest) return;
 

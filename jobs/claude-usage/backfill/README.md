@@ -1,5 +1,10 @@
 # Backfilling the archive into Prometheus
 
+**This is the recovery path, not the routine one.** The nightly job now publishes each finished day
+over OTLP as it happens (see the parent README), so this is only for days that fell past Prometheus'
+`out_of_order_time_window` — a laptop off for longer than a week, or a range that predates the job.
+Everything here still works; you should just rarely need it.
+
 Prometheus rejects samples with old timestamps — its OTLP receiver is built for live systems and
 out-of-order ingestion is off by default. So historical days cannot be *pushed*; they have to be
 written as TSDB blocks directly, which is what `promtool tsdb create-blocks-from openmetrics` does.

@@ -11,6 +11,17 @@ global:
 otlp:
   translation_strategy: UnderscoreEscapingWithSuffixes
 
+storage:
+  tsdb:
+    # jobs/claude-usage publishes each finished day stamped at that day's 00:00 UTC — always in the
+    # past, which Prometheus rejects outright at the default window of 0. The window is what lets a
+    # laptop that was asleep (or a job that failed) catch up when it next runs, so it is sized for
+    # an absence rather than for the one-day lag of the normal case.
+    #
+    # Reloadable with SIGHUP, no restart: restarting Prometheus discards the in-memory
+    # delta-to-cumulative state and shows up as a counter reset on the live panels.
+    out_of_order_time_window: 7d
+
 scrape_configs:
   # Self-scrape, so the metrics store can answer whether it is itself healthy.
   - job_name: prometheus

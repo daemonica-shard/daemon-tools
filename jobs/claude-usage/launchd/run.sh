@@ -10,6 +10,7 @@ ENV_FILE="${CLAUDE_USAGE_ENV:-$HOME/.claude-usage/env}"
 if [ -f "$ENV_FILE" ]; then
 	. "$ENV_FILE"
 	export PATH TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+	export CLAUDE_USAGE_OTLP_ENDPOINT CLAUDE_USAGE_OTLP_TOKEN
 fi
 
 # Resolve the package from this script's own location, so the checkout can move without edits.

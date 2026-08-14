@@ -22,7 +22,8 @@ wrong.
 
 1. Shells out to `npx ccusage daily --json`.
 2. Merges the result into `~/.claude-usage/archive.json`, keyed by date.
-3. With `--digest`, formats the last 7 days and sends it to Telegram.
+3. Publishes each newly finished day to Prometheus, so the Grafana panels keep moving.
+4. With `--digest`, formats the last 7 days and sends it to Telegram.
 
 The merge takes the **larger** reading for any day it already holds. A day inside the window can
 only grow as you work; a day that has aged out vanishes from the report rather than returning
@@ -40,10 +41,11 @@ not this.
 ```sh
 pnpm --filter claude-usage build
 
-node dist/index.js                 # refresh the archive
-node dist/index.js --digest        # refresh, then send to Telegram
+node dist/index.js                 # refresh the archive, publish finished days
+node dist/index.js --digest        # also send the digest to Telegram
 node dist/index.js --dry-run       # print the digest instead of sending
 node dist/index.js --days 30       # widen the digest window
+node dist/index.js --no-publish    # refresh only, leave Prometheus alone
 ```
 
 | Variable | Meaning |
@@ -51,7 +53,38 @@ node dist/index.js --days 30       # widen the digest window
 | `TELEGRAM_BOT_TOKEN` | Same bot as the CI build notifications. Unset → digest skipped, not failed. |
 | `TELEGRAM_CHAT_ID` | Target chat. Unset → digest skipped. |
 | `CLAUDE_USAGE_ARCHIVE` | Archive path. Default `~/.claude-usage/archive.json`. |
+| `CLAUDE_USAGE_OTLP_ENDPOINT` | OTLP base, e.g. `https://otel.<domain>/api/v1/otlp`. Unset → publish skipped, not failed. |
+| `CLAUDE_USAGE_OTLP_TOKEN` | The server's `OTEL_INGEST_TOKEN`. Unset → publish skipped. |
 | `CCUSAGE_SPEC` | npx spec for ccusage. Default `ccusage@latest`; pin here if a release breaks the JSON shape. |
+
+## Publishing to Prometheus
+
+The archive on this Mac is the source of truth; Prometheus is a projection of it that Grafana can
+draw. Each finished day is sent once as a gauge stamped at that day's `00:00 UTC`, under the same
+metric names the [backfill](backfill/README.md) seeded — the series has to be continuous across the
+two eras or every panel gets a seam on the day this job took over.
+
+Three consequences worth knowing:
+
+- **The archive panels run a day behind.** Today is never published: its total is still growing, and
+  a day may only ever be sent once. The dashboard's stat panels `sum_over_time()` every sample in
+  range, so a second sample for a day it already holds silently inflates the totals. Live activity
+  covers the present; this covers the record.
+- **Backdated samples need a window.** A day's sample is always in the past, which Prometheus
+  rejects at its default `out_of_order_time_window` of `0`. `deploy/prometheus/prometheus.yml` sets
+  `7d`, sized for a laptop that slept rather than for the ordinary one-day lag. `WINDOW_DAYS` in
+  `src/index.ts` must match it.
+- **Days past that window are written off**, named once in the log. Only the promtool block import
+  can recover those.
+
+State lives in `~/.claude-usage/published.json`, next to the archive: the days already dealt with,
+so nothing is sent twice. A first run publishes *only yesterday* and writes off everything earlier —
+those days are already in Prometheus from the promtool import, and re-sending one whose value moved
+by a rounding step is a duplicate-sample error that fails the batch. To fill a known gap, say so:
+
+```sh
+node dist/index.js --publish-since 2026-08-12    # only days Prometheus does not already hold
+```
 
 The archive lives outside the repo on purpose — **this repo is public**, and the archive is a record
 of your personal working hours.
@@ -68,6 +101,8 @@ PATH=$(dirname "$(which node)"):/usr/bin:/bin
 NODE=$(which node)
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+CLAUDE_USAGE_OTLP_ENDPOINT=https://otel.<domain>/api/v1/otlp
+CLAUDE_USAGE_OTLP_TOKEN=...
 EOF
 chmod 600 ~/.claude-usage/env
 

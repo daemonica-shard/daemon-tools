@@ -57,6 +57,9 @@ importers:
 
   mcp-server:
     dependencies:
+      '@daemon-tools/bigquery':
+        specifier: workspace:*
+        version: link:../lib/bigquery
       '@daemon-tools/firebase':
         specifier: workspace:*
         version: link:../lib/firebase

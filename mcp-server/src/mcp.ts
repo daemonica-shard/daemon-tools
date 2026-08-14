@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { TenantConfig } from "./tenants.js";
 import { createPing } from "./tools/ping.js";
 import { createLivedoc } from "./tools/livedoc.js";
+import { createCrashlytics } from "./tools/crashlytics.js";
 
 // A tool instance is created once per tenant at startup and holds long-lived state
 // (Firebase clients, caches). Registration happens per request, because in stateless
@@ -16,6 +17,7 @@ type ToolFactory = (tenant: TenantConfig, config: Record<string, unknown>) => To
 const catalog: Record<string, ToolFactory> = {
   ping: createPing,
   livedoc: createLivedoc,
+  crashlytics: createCrashlytics,
 };
 
 export function buildTenantTools(tenant: TenantConfig): ToolInstance[] {

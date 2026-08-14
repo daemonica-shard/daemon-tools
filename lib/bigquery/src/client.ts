@@ -19,6 +19,29 @@ export interface QueryOptions {
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 * 1024; // 5 GiB
 
+export interface TableField {
+  name: string;
+  type: string;
+  mode?: string;
+}
+
+interface RawField {
+  name?: string;
+  type?: string;
+  mode?: string;
+  fields?: RawField[];
+}
+
+// Crashlytics nests heavily (application.display_version, device.model). Flatten to dotted paths
+// so the output reads the way the field would be written in a query.
+function flattenFields(fields: RawField[], prefix = ""): TableField[] {
+  return fields.flatMap((f) => {
+    const name = prefix ? `${prefix}.${f.name}` : (f.name ?? "");
+    const self: TableField = { name, type: f.type ?? "UNKNOWN", mode: f.mode };
+    return f.fields?.length ? [self, ...flattenFields(f.fields, name)] : [self];
+  });
+}
+
 export class BigQueryClient {
   private readonly bq: BigQuery;
 
@@ -45,5 +68,12 @@ export class BigQueryClient {
   async listTables(datasetId: string): Promise<string[]> {
     const [tables] = await this.bq.dataset(datasetId).getTables();
     return tables.map((t) => t.id ?? "").filter(Boolean);
+  }
+
+  // Exposed as a tool rather than kept internal: the Crashlytics export's schema isn't fully
+  // documented, so being able to ask the live table what it holds beats encoding assumptions.
+  async describeTable(datasetId: string, tableId: string): Promise<TableField[]> {
+    const [metadata] = await this.bq.dataset(datasetId).table(tableId).getMetadata();
+    return flattenFields(metadata?.schema?.fields ?? []);
   }
 }

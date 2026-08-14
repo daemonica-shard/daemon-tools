@@ -18,6 +18,16 @@ tenants:
         firebase_sa: /config/firebase/my-project-sa.json
         features_file: /config/features/my-project.yaml
         cache_ttl_seconds: 300
+      # crashlytics: crash data via the Firebase → BigQuery export. `location` must match where
+      # the export was created; BigQuery defaults to US and a mismatch fails with a "not found"
+      # that reads like a permissions error. Tables only exist once an error event has been
+      # exported, so an empty list means no crashes yet, not a broken link.
+      crashlytics:
+        project: my-project-id
+        service_account: /config/firebase/my-project-sa.json
+        dataset: firebase_crashlytics
+        location: me-central1
+        cache_ttl_seconds: 300
 
   daemonica/sway:
     display: Sway

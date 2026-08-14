@@ -5,11 +5,15 @@ WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY tsconfig.base.json ./
 COPY mcp-server/package.json mcp-server/
-COPY lib/firebase/package.json lib/firebase/
-RUN pnpm install --frozen-lockfile --filter mcp-server...
+# The whole lib tree, not one package.json per package: listing them individually meant every new
+# shared package failed the build with "tsc: not found", because its devDependencies were never
+# installed. Costs a little layer caching — lib is small and changes rarely.
 COPY lib lib
+RUN pnpm install --frozen-lockfile --filter mcp-server...
 COPY mcp-server mcp-server
-RUN pnpm -r build \
+# `--filter mcp-server...` builds the server and its dependencies only. Plain `pnpm -r` also tries
+# to build jobs/, which isn't copied into this image.
+RUN pnpm --filter mcp-server... build \
  && pnpm --filter mcp-server deploy --prod /app
 
 FROM node:22-alpine

@@ -80,6 +80,10 @@ jobs:
           # Billed against the Max subscription rather than a metered API account. Consumes plan
           # limits, and is invisible to jobs/claude-usage, which only sees this Mac's transcripts.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Supplying a token short-circuits the action's OIDC exchange, which otherwise needs both
+          # `id-token: write` and the Claude GitHub App installed on this repo. The action does not
+          # need to write to GitHub at all here — the steps below open the issue themselves.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # The real prompt lives in the repo so it can be reviewed and iterated on in a PR
           # instead of buried in workflow YAML.
           prompt: |
@@ -95,10 +99,28 @@ jobs:
             --allowedTools "Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
             --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"issue_title":{"type":"string"},"issue_body":{"type":"string"}},"required":["has_findings","issue_title","issue_body"],"additionalProperties":false}'
 
+      # All JSON handling happens here, in shell. An `env:` block is evaluated even when its step's
+      # `if:` is false, so a fromJSON() over a failed review's empty output is a whole-workflow
+      # template error rather than a skipped step — an `if:` guard cannot prevent it.
+      - name: Parse findings
+        id: parsed
+        if: steps.review.outcome == 'success' && steps.review.outputs.structured_output != ''
+        env:
+          STRUCTURED_OUTPUT: ${{ steps.review.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$STRUCTURED_OUTPUT" > "$RUNNER_TEMP/review.json"
+          jq -r '.issue_title' "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/title.txt"
+          jq -r '.issue_body'  "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/body.md"
+          {
+            echo "reviewed=true"
+            echo "has_findings=$(jq -r '.has_findings' "$RUNNER_TEMP/review.json")"
+          } >> "$GITHUB_OUTPUT"
+
       # `gh label create` is not idempotent, so a second run would fail the job on an existing
       # label rather than on anything real.
       - name: Ensure label
-        if: steps.review.outputs.structured_output != '' && !inputs.dry_run
+        if: steps.parsed.outputs.has_findings == 'true' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -107,43 +129,34 @@ jobs:
             --description 'Automated review of recently landed commits' \
             2>/dev/null || true
 
-      # Model output reaches gh through the environment, never through the shell command line —
+      # Title and body reach gh as a quoted variable and a file, never as inline command text —
       # a finding containing a backtick or $(...) must not become a command.
       - name: Open issue
-        id: issue
-        if: >-
-          steps.review.outputs.structured_output != ''
-          && fromJSON(steps.review.outputs.structured_output).has_findings
-          && !inputs.dry_run
+        if: steps.parsed.outputs.has_findings == 'true' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TITLE: ${{ fromJSON(steps.review.outputs.structured_output).issue_title }}
-          BODY: ${{ fromJSON(steps.review.outputs.structured_output).issue_body }}
         run: |
           set -euo pipefail
-          url=$(printf '%s' "$BODY" | gh issue create \
-            --title "$TITLE" \
-            --body-file - \
+          title=$(cat "$RUNNER_TEMP/title.txt")
+          url=$(gh issue create \
+            --title "$title" \
+            --body-file "$RUNNER_TEMP/body.md" \
             --label "$LABEL")
           echo "Opened $url"
           echo "### [Commit review]($url)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: No findings
-        if: >-
-          steps.review.outputs.structured_output != ''
-          && !fromJSON(steps.review.outputs.structured_output).has_findings
-        run: echo "Reviewed ${{ steps.range.outputs.count }} commit(s), nothing to report."
-
       - name: Print review
-        if: steps.review.outputs.structured_output != '' && inputs.dry_run
-        env:
-          BODY: ${{ fromJSON(steps.review.outputs.structured_output).issue_body }}
-        run: printf '%s\n' "$BODY" >> "$GITHUB_STEP_SUMMARY"
+        if: steps.parsed.outputs.has_findings == 'true' && inputs.dry_run
+        run: cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No findings
+        if: steps.parsed.outputs.has_findings == 'false'
+        run: echo "Reviewed ${{ steps.range.outputs.count }} commit(s), nothing to report."
 
       # Last, and only on success: a failed review must leave the range alone so the next run
       # picks the same commits up again rather than silently dropping them.
       - name: Move marker
-        if: steps.review.outputs.structured_output != '' && !inputs.dry_run
+        if: steps.parsed.outputs.reviewed == 'true' && !inputs.dry_run
         run: |
           set -euo pipefail
           git tag -f "$MARKER" "${{ steps.range.outputs.head }}"

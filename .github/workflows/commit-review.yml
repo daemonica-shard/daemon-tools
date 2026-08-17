@@ -1,0 +1,151 @@
+name: Commit review
+
+# Reviews whatever landed since the last successful review and opens one issue with the findings.
+# The range is tracked by a git tag rather than a fixed window, so a quiet week reviews nothing and
+# a burst after a quiet week still gets reviewed in full.
+
+on:
+  schedule:
+    # 03:00 UTC = 07:00 Asia/Dubai — the review is waiting by the start of the day.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Override the range start (SHA or ref). Empty = since the last review.'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Review and print, but do not open an issue or move the marker'
+        type: boolean
+        default: false
+
+# The marker tag makes concurrent runs incoherent: two runs would review the same range and both
+# move it.
+concurrency:
+  group: commit-review
+  cancel-in-progress: false
+
+env:
+  MARKER: commit-review/last
+  LABEL: commit-review
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # move the marker tag
+      issues: write # open the findings issue
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the review needs history, not just the tip
+
+      # Resolved in shell rather than by the agent: which commits are new is bookkeeping, and
+      # bookkeeping the agent does is bookkeeping that can drift.
+      - name: Resolve range
+        id: range
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+
+          if [ -n "${{ inputs.base }}" ]; then
+            base=$(git rev-parse "${{ inputs.base }}^{commit}")
+          elif git rev-parse -q --verify "refs/tags/$MARKER^{commit}" >/dev/null; then
+            base=$(git rev-parse "refs/tags/$MARKER^{commit}")
+          else
+            # First run: fall back to a day's worth, so the first review isn't the whole repo.
+            base=$(git rev-list -1 --before='24 hours ago' HEAD || true)
+            [ -n "$base" ] || base=$(git rev-list --max-parents=0 HEAD | tail -1)
+            echo "No $MARKER tag — bootstrapping from $base"
+          fi
+
+          count=$(git rev-list --count "$base..$head")
+          {
+            echo "base=$base"
+            echo "head=$head"
+            echo "count=$count"
+          } >> "$GITHUB_OUTPUT"
+          echo "$count commit(s) in $base..$head"
+
+      - name: Nothing to review
+        if: steps.range.outputs.count == '0'
+        run: echo "No commits since the last review — skipping."
+
+      - name: Review
+        id: review
+        if: steps.range.outputs.count != '0'
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Billed against the Max subscription rather than a metered API account. Consumes plan
+          # limits, and is invisible to jobs/claude-usage, which only sees this Mac's transcripts.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The real prompt lives in the repo so it can be reviewed and iterated on in a PR
+          # instead of buried in workflow YAML.
+          prompt: |
+            Read .github/prompts/commit-review.md and follow it exactly.
+
+            The range to review is ${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}
+            (${{ steps.range.outputs.count }} commit(s)). Wherever the instructions say $BASE, use
+            ${{ steps.range.outputs.base }}; wherever they say $HEAD, use
+            ${{ steps.range.outputs.head }}.
+          claude_args: >-
+            --model claude-opus-5
+            --max-turns 60
+            --allowedTools "Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
+            --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"issue_title":{"type":"string"},"issue_body":{"type":"string"}},"required":["has_findings","issue_title","issue_body"],"additionalProperties":false}'
+
+      # `gh label create` is not idempotent, so a second run would fail the job on an existing
+      # label rather than on anything real.
+      - name: Ensure label
+        if: steps.review.outputs.structured_output != '' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "$LABEL" \
+            --color 5319e7 \
+            --description 'Automated review of recently landed commits' \
+            2>/dev/null || true
+
+      # Model output reaches gh through the environment, never through the shell command line —
+      # a finding containing a backtick or $(...) must not become a command.
+      - name: Open issue
+        id: issue
+        if: >-
+          steps.review.outputs.structured_output != ''
+          && fromJSON(steps.review.outputs.structured_output).has_findings
+          && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: ${{ fromJSON(steps.review.outputs.structured_output).issue_title }}
+          BODY: ${{ fromJSON(steps.review.outputs.structured_output).issue_body }}
+        run: |
+          set -euo pipefail
+          url=$(printf '%s' "$BODY" | gh issue create \
+            --title "$TITLE" \
+            --body-file - \
+            --label "$LABEL")
+          echo "Opened $url"
+          echo "### [Commit review]($url)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No findings
+        if: >-
+          steps.review.outputs.structured_output != ''
+          && !fromJSON(steps.review.outputs.structured_output).has_findings
+        run: echo "Reviewed ${{ steps.range.outputs.count }} commit(s), nothing to report."
+
+      - name: Print review
+        if: steps.review.outputs.structured_output != '' && inputs.dry_run
+        env:
+          BODY: ${{ fromJSON(steps.review.outputs.structured_output).issue_body }}
+        run: printf '%s\n' "$BODY" >> "$GITHUB_STEP_SUMMARY"
+
+      # Last, and only on success: a failed review must leave the range alone so the next run
+      # picks the same commits up again rather than silently dropping them.
+      - name: Move marker
+        if: steps.review.outputs.structured_output != '' && !inputs.dry_run
+        run: |
+          set -euo pipefail
+          git tag -f "$MARKER" "${{ steps.range.outputs.head }}"
+          git push -f origin "refs/tags/$MARKER"
+          echo "Marker now at ${{ steps.range.outputs.head }}"

@@ -1,1 +1,6 @@
-export { BigQueryClient, type BigQueryConfig, type QueryOptions } from "./client.js";
+export {
+  BigQueryClient,
+  type BigQueryConfig,
+  type QueryOptions,
+  type TableField,
+} from "./client.js";

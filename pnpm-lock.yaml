@@ -27,11 +27,49 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.1)
 
+  jobs/crashlytics-digest:
+    dependencies:
+      '@daemon-tools/crashlytics':
+        specifier: workspace:*
+        version: link:../../lib/crashlytics
+      '@daemon-tools/notify':
+        specifier: workspace:*
+        version: link:../../lib/notify
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.1)
+
   lib/bigquery:
     dependencies:
       '@google-cloud/bigquery':
         specifier: ^7.9.0
         version: 7.9.4
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.1)
+
+  lib/crashlytics:
+    dependencies:
+      '@daemon-tools/bigquery':
+        specifier: workspace:*
+        version: link:../bigquery
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
@@ -76,6 +114,9 @@ importers:
       '@daemon-tools/bigquery':
         specifier: workspace:*
         version: link:../lib/bigquery
+      '@daemon-tools/crashlytics':
+        specifier: workspace:*
+        version: link:../lib/crashlytics
       '@daemon-tools/firebase':
         specifier: workspace:*
         version: link:../lib/firebase

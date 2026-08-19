@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BigQueryClient } from "@daemon-tools/bigquery";
+import { CrashlyticsClient } from "@daemon-tools/crashlytics";
 import { TTLCache } from "@daemon-tools/firebase";
 import type { TenantConfig } from "../tenants.js";
 import type { ToolInstance } from "../mcp.js";
@@ -10,11 +10,6 @@ const configSchema = z.object({
   dataset: z.string().default("firebase_crashlytics"),
   cache_ttl_seconds: z.number().int().positive().default(300),
 });
-
-// Table names cannot be query parameters, so they are interpolated — which makes validation the
-// only thing standing between a tool argument and arbitrary SQL. Crashlytics names are the app id
-// with dots replaced by underscores, plus _ANDROID/_IOS and optionally _REALTIME.
-const TABLE_RE = /^[A-Za-z0-9_]+$/;
 
 function asText(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -30,17 +25,16 @@ export function createCrashlytics(
   if (!google.location) {
     throw new Error(`tenant ${tenant.id}: crashlytics needs google.location (BigQuery region)`);
   }
-  const client = new BigQueryClient({
+  // The queries live in @daemon-tools/crashlytics so the digest job asks the export the same
+  // questions this tool does. Caching stays here: it exists to keep an interactive client from
+  // re-billing the same scan, which a once-a-day job has no need of.
+  const crashlytics = new CrashlyticsClient({
     projectId: google.project,
     serviceAccountPath: google.service_account,
     location: google.location,
+    dataset: config.dataset,
   });
   const cache = new TTLCache<unknown>(config.cache_ttl_seconds * 1000);
-
-  const qualified = (table: string) => {
-    if (!TABLE_RE.test(table)) throw new Error(`invalid table name: ${table}`);
-    return `\`${google.project}.${config.dataset}.${table}\``;
-  };
 
   return {
     register(server) {
@@ -53,7 +47,7 @@ export function createCrashlytics(
             "have been recorded since the export was linked, not that it is misconfigured.",
           inputSchema: {},
         },
-        async () => asText(await cache.getOrLoad("tables", () => client.listTables(config.dataset))),
+        async () => asText(await cache.getOrLoad("tables", () => crashlytics.listTables())),
       );
 
       server.registerTool(
@@ -65,14 +59,10 @@ export function createCrashlytics(
             "partly documented.",
           inputSchema: { table: z.string() },
         },
-        async ({ table }) => {
-          if (!TABLE_RE.test(table)) throw new Error(`invalid table name: ${table}`);
-          return asText(
-            await cache.getOrLoad(`schema:${table}`, () =>
-              client.describeTable(config.dataset, table),
-            ),
-          );
-        },
+        async ({ table }) =>
+          asText(
+            await cache.getOrLoad(`schema:${table}`, () => crashlytics.describeTable(table)),
+          ),
       );
 
       server.registerTool(
@@ -88,34 +78,12 @@ export function createCrashlytics(
             fatal_only: z.boolean().default(false),
           },
         },
-        async ({ table, days, limit, fatal_only }) => {
-          // affected_installs matters more than event count for triage: one device in a crash loop
-          // can dominate the event count while affecting nobody else.
-          const sql = `
-            SELECT issue_id,
-                   ANY_VALUE(issue_title) AS title,
-                   ANY_VALUE(issue_subtitle) AS subtitle,
-                   error_type,
-                   LOGICAL_OR(is_fatal) AS fatal,
-                   COUNT(*) AS events,
-                   COUNT(DISTINCT installation_uuid) AS affected_installs,
-                   ANY_VALUE(blame_frame.file) AS blame_file,
-                   ANY_VALUE(blame_frame.symbol) AS blame_symbol,
-                   ANY_VALUE(blame_frame.line) AS blame_line,
-                   MIN(event_timestamp) AS first_seen,
-                   MAX(event_timestamp) AS last_seen
-            FROM ${qualified(table)}
-            WHERE event_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
-              ${fatal_only ? "AND is_fatal" : ""}
-            GROUP BY issue_id, error_type
-            ORDER BY affected_installs DESC, events DESC
-            LIMIT @limit`;
-          return asText(
+        async ({ table, days, limit, fatal_only }) =>
+          asText(
             await cache.getOrLoad(`top:${table}:${days}:${limit}:${fatal_only}`, () =>
-              client.query(sql, { params: { days, limit } }),
+              crashlytics.topCrashes({ table, days, limit, fatalOnly: fatal_only }),
             ),
-          );
-        },
+          ),
       );
 
       server.registerTool(
@@ -131,27 +99,12 @@ export function createCrashlytics(
             days: z.number().int().positive().max(90).default(14),
           },
         },
-        async ({ table, issue_id, days }) => {
-          const sql = `
-            SELECT application.display_version AS app_version,
-                   operating_system.display_version AS os_version,
-                   device.model AS device_model,
-                   ANY_VALUE(unity_metadata.unity_version) AS unity_version,
-                   LOGICAL_OR(unity_metadata.debug_build) AS any_debug_build,
-                   COUNT(*) AS events,
-                   COUNT(DISTINCT installation_uuid) AS affected_installs
-            FROM ${qualified(table)}
-            WHERE event_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
-              AND issue_id = @issue_id
-            GROUP BY app_version, os_version, device_model
-            ORDER BY events DESC
-            LIMIT 50`;
-          return asText(
+        async ({ table, issue_id, days }) =>
+          asText(
             await cache.getOrLoad(`detail:${table}:${issue_id}:${days}`, () =>
-              client.query(sql, { params: { days, issue_id } }),
+              crashlytics.crashDetail({ table, issueId: issue_id, days }),
             ),
-          );
-        },
+          ),
       );
 
       server.registerTool(
@@ -165,23 +118,12 @@ export function createCrashlytics(
             days: z.number().int().positive().max(90).default(14),
           },
         },
-        async ({ table, days }) => {
-          const sql = `
-            SELECT application.display_version AS version,
-                   error_type,
-                   COUNT(*) AS events,
-                   COUNT(DISTINCT issue_id) AS distinct_issues,
-                   COUNT(DISTINCT installation_uuid) AS affected_installs
-            FROM ${qualified(table)}
-            WHERE event_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
-            GROUP BY version, error_type
-            ORDER BY events DESC`;
-          return asText(
+        async ({ table, days }) =>
+          asText(
             await cache.getOrLoad(`versions:${table}:${days}`, () =>
-              client.query(sql, { params: { days } }),
+              crashlytics.crashesByVersion({ table, days }),
             ),
-          );
-        },
+          ),
       );
     },
   };

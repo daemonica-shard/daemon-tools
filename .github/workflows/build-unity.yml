@@ -131,8 +131,14 @@ jobs:
           fi
           # Same check the runner-images reporters used: same device id means same filesystem.
           if [ ! -d /mnt ] || [ "$(stat -c '%d' /)" = "$(stat -c '%d' /mnt)" ]; then
-            echo "::error title=Runner has no separate /mnt disk::/mnt is on the root filesystem, so the Unity image and the Library would share one ${root_gb} GB disk and this build cannot fit. Re-run the job to draw a different runner, or set the linux-runner input to a larger runner. See actions/runner-images#13587."
-            exit 1
+            # No second disk, so the image and Library must share one ~72 GB volume. That is tight
+            # rather than impossible — roughly 48-53 GB of need against ~51 GB free after cleanup —
+            # so try, with every gram of ballast dropped: no swapfile, and Docker's preinstalled
+            # images purged. It may still die inside the image pull with "no space left on device";
+            # if it does, re-run to draw a two-disk runner or move to a larger one.
+            echo "mode=single-small" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Runner has no separate /mnt disk::/mnt is on the root filesystem, so the Unity image and Library share one ${root_gb} GB disk. Building anyway with swap disabled, but space will be very tight. Re-run to draw a different runner, or set linux-runner to a larger runner. See actions/runner-images#13587."
+            exit 0
           fi
           echo "mode=split" >> "$GITHUB_OUTPUT"
           echo "Root ${root_gb} GB with a separate /mnt — splitting Docker onto /mnt."
@@ -142,19 +148,26 @@ jobs:
       # Point Docker's data-root at the ~73 GB /mnt disk — proven separate by the step above — so
       # the root disk is free for the workspace. Must run before anything pulls the image. Skipped
       # in single-big mode, where there is one disk and it is large enough for both.
-      - name: Move Docker to /mnt
-        if: runner.os == 'Linux' && steps.disk.outputs.mode == 'split'
+      # `rm -rf /var/lib/docker` runs in every mode: it drops the runner's preinstalled images,
+      # which is free space whether or not the data-root then moves. Only `split` repoints Docker
+      # at /mnt — in single-small that would just shuffle 30 GB between two directories of the
+      # same volume, and in single-big there is no shortage to solve.
+      - name: Prepare Docker storage
+        if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
           sudo systemctl stop docker docker.socket
-          # Remove pre-existing swap and temp files on /mnt to maximise space for Docker
-          sudo swapoff /mnt/swapfile 2>/dev/null || true
-          sudo rm -f /mnt/swapfile
-          sudo mkdir -p /mnt/docker
-          echo '{"data-root":"/mnt/docker"}' | sudo tee /etc/docker/daemon.json
           sudo rm -rf /var/lib/docker
+          if [ "${{ steps.disk.outputs.mode }}" = "split" ]; then
+            # Remove pre-existing swap and temp files on /mnt to maximise space for Docker
+            sudo swapoff /mnt/swapfile 2>/dev/null || true
+            sudo rm -f /mnt/swapfile
+            sudo mkdir -p /mnt/docker
+            echo '{"data-root":"/mnt/docker"}' | sudo tee /etc/docker/daemon.json
+          fi
           sudo systemctl start docker
           docker info | grep "Docker Root Dir"
-          echo "/mnt free:"; df -h /mnt
+          df -h / /mnt || true
 
       # GameCI's Unity Docker image is 25-35 GB and the Library it builds against is ~20 GB.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
@@ -188,7 +201,8 @@ jobs:
       # It lands on /mnt rather than the root disk on purpose — which only holds in split mode,
       # where /mnt was proven to be its own disk. Without that check this was 4 GB taken from the
       # very disk the build was running out of. Larger runners start at 16 GB RAM, so single-big
-      # mode skips it rather than spending disk on swap it does not need.
+      # mode skips it rather than spending disk on swap it does not need — and single-small skips
+      # it because those 4 GB are exactly the margin that decides whether the build fits at all.
       - name: Add swap (cold-build OOM guard)
         if: runner.os == 'Linux' && steps.disk.outputs.mode == 'split'
         run: |

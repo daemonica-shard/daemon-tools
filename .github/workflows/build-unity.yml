@@ -177,6 +177,11 @@ jobs:
           sudo rm -rf /var/lib/apt/lists/*
           sudo docker image prune --all --force || true
           echo "After:"; df -h /
+          # What is left, so the next person tuning this works from a list rather than a guess.
+          # A standard runner lands near 21 GB used; a minimal Ubuntu is 2-3 GB, so this names
+          # whatever the ~18 GB difference actually is.
+          echo "Largest remaining directories:"
+          sudo du -xh --max-depth=3 / 2>/dev/null | sort -rh | head -20 || true
 
       # ~7.8 GB RAM is tight for a cold IL2CPP + clang, so this adds to the ~3 GB the runner
       # already has. Kept at 4 GB to leave room for Docker (Unity 6 images are 25-35 GB) on /mnt.
@@ -294,6 +299,23 @@ jobs:
       - name: Fix Library/ ownership for cache save
         if: always() && runner.os == 'Linux'
         run: sudo chown -R $(id -u):$(id -g) "${{ inputs.project-path }}/Library" 2>/dev/null || true
+
+      # The disk budget in "Plan disk strategy" turns on two numbers that have only ever been
+      # estimated: what the Unity image expands to (the 25-35 GB range quoted below is a guess)
+      # and how big Library/ really gets. Measure both — it decides whether a single-disk runner
+      # could fit them together, or whether failing fast is the only honest option. Runs after the
+      # chown, so Library/ is readable, and before the reclaim below, which deletes the image.
+      - name: Measure disk footprint
+        if: always() && runner.os == 'Linux'
+        run: |
+          echo "Unity image, uncompressed on disk:"
+          docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}' || true
+          echo "Library/:"
+          sudo du -sh "${{ inputs.project-path }}/Library" 2>/dev/null || true
+          sudo du -xh --max-depth=1 "${{ inputs.project-path }}/Library" 2>/dev/null \
+            | sort -rh | head -8 || true
+          echo "Disks:"
+          df -h / /mnt || true
 
       # The build re-pulled GameCI's ~25 GB Unity image (we pruned it at the start), refilling
       # the disk. Compressing Library/ into cache.tzst needs free space ≈ the archive size, so

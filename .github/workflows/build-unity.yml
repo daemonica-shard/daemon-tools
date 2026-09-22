@@ -43,6 +43,14 @@ on:
         description: 'Free-text build note'
         type: string
         default: ''
+      linux-runner:
+        description: >-
+          Runner label for Android builds. Default `ubuntu-latest` is the standard 2-core/72 GB
+          runner, which only fits this build when it gets a separate /mnt disk (see the disk
+          strategy step). Name a GitHub larger runner — 4-core is 150 GB — to escape that lottery;
+          the workflow detects the bigger disk and stops splitting across /mnt. iOS ignores this.
+        type: string
+        default: 'ubuntu-latest'
     secrets:
       UNITY_LICENSE:
         required: true
@@ -82,7 +90,7 @@ on:
 jobs:
   build:
     name: ${{ inputs.platform }} ${{ inputs.config }}
-    runs-on: ${{ inputs.platform == 'iOS' && 'macos-latest' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.platform == 'iOS' && 'macos-latest' || inputs.linux-runner }}
     # Resolve the secret to a boolean here: `secrets` can't be referenced in a step `if:`, but a
     # plain env flag can. Avoids putting the config contents in an env just to gate the step.
     env:
@@ -104,25 +112,38 @@ jobs:
       # size during the build, so the run fails at the same wall two hours later, having spent the
       # minutes. Detect the bad draw in seconds instead and fail, so a re-run draws a different
       # runner — which the issue's reporters confirm usually works within an attempt or two.
-      - name: Check runner has a separate /mnt disk
+      # A larger runner sidesteps the whole problem: 4-core is 150 GB on one disk, which holds the
+      # image and the Library together with room left. So decide a mode rather than assume the
+      # standard runner's shape — `split` needs the two-disk dance below, `single-big` must skip it
+      # (moving Docker to /mnt there would shove 30 GB onto a directory of the same disk for no
+      # reason). 120 GB cleanly separates a 150 GB larger runner from the 72 GB standard one.
+      - name: Plan disk strategy
         id: disk
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           df -h / /mnt || true
+          root_gb=$(df -BG --output=size / | tail -1 | tr -dc '0-9')
+          if [ "$root_gb" -ge 120 ]; then
+            echo "mode=single-big" >> "$GITHUB_OUTPUT"
+            echo "Root disk is ${root_gb} GB — image and Library both fit; leaving Docker in place."
+            exit 0
+          fi
           # Same check the runner-images reporters used: same device id means same filesystem.
           if [ ! -d /mnt ] || [ "$(stat -c '%d' /)" = "$(stat -c '%d' /mnt)" ]; then
-            echo "::error title=Runner has no separate /mnt disk::/mnt is on the root filesystem, so the Unity image and the Library would share one 72 GB disk and this build cannot fit. Re-run the job to draw a different runner. See actions/runner-images#13587."
+            echo "::error title=Runner has no separate /mnt disk::/mnt is on the root filesystem, so the Unity image and the Library would share one ${root_gb} GB disk and this build cannot fit. Re-run the job to draw a different runner, or set the linux-runner input to a larger runner. See actions/runner-images#13587."
             exit 1
           fi
-          echo "/mnt is a separate disk — proceeding."
+          echo "mode=split" >> "$GITHUB_OUTPUT"
+          echo "Root ${root_gb} GB with a separate /mnt — splitting Docker onto /mnt."
 
       # The ~25 GB GameCI image + its container layers otherwise live in /var/lib/docker on the
       # 72 GB root disk, competing with the cold build's workspace (Library + IL2CPP) for space.
-      # Point Docker's data-root at the ~73 GB /mnt disk — guaranteed separate by the guard above
-      # — so the root disk is free for the workspace. Must run before anything pulls the image.
+      # Point Docker's data-root at the ~73 GB /mnt disk — proven separate by the step above — so
+      # the root disk is free for the workspace. Must run before anything pulls the image. Skipped
+      # in single-big mode, where there is one disk and it is large enough for both.
       - name: Move Docker to /mnt
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.disk.outputs.mode == 'split'
         run: |
           sudo systemctl stop docker docker.socket
           # Remove pre-existing swap and temp files on /mnt to maximise space for Docker
@@ -159,11 +180,12 @@ jobs:
 
       # ~7.8 GB RAM is tight for a cold IL2CPP + clang, so this adds to the ~3 GB the runner
       # already has. Kept at 4 GB to leave room for Docker (Unity 6 images are 25-35 GB) on /mnt.
-      # It lands on /mnt rather than the root disk on purpose — which only holds because the guard
-      # above proved /mnt is a separate disk. Without that check this was 4 GB taken from the very
-      # disk the build was running out of.
+      # It lands on /mnt rather than the root disk on purpose — which only holds in split mode,
+      # where /mnt was proven to be its own disk. Without that check this was 4 GB taken from the
+      # very disk the build was running out of. Larger runners start at 16 GB RAM, so single-big
+      # mode skips it rather than spending disk on swap it does not need.
       - name: Add swap (cold-build OOM guard)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.disk.outputs.mode == 'split'
         run: |
           free -h
           sudo fallocate -l 4G /mnt/swapfile2

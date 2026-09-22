@@ -92,10 +92,35 @@ jobs:
       HAVE_TELEGRAM: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
       HAVE_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
+      # This build only fits on a runner with TWO disks: ~30 GB of GameCI image on /mnt and a
+      # ~20 GB Library on the 72 GB root. Since 2026-01-22 GitHub hands out some ubuntu-22.04 and
+      # ubuntu-24.04 runners with no separate ephemeral disk, where /mnt is just a directory on
+      # the root disk — actions/runner-images#13587, which GitHub closed as "not planned". On one
+      # of those the two compete for a single 72 GB disk, every step below still "succeeds", and
+      # the job dies ten minutes later inside the image pull with an opaque
+      # `failed to register layer: no space left on device`.
+      #
+      # Skipping the Library cache does NOT rescue it: Unity regenerates a Library of the same
+      # size during the build, so the run fails at the same wall two hours later, having spent the
+      # minutes. Detect the bad draw in seconds instead and fail, so a re-run draws a different
+      # runner — which the issue's reporters confirm usually works within an attempt or two.
+      - name: Check runner has a separate /mnt disk
+        id: disk
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          df -h / /mnt || true
+          # Same check the runner-images reporters used: same device id means same filesystem.
+          if [ ! -d /mnt ] || [ "$(stat -c '%d' /)" = "$(stat -c '%d' /mnt)" ]; then
+            echo "::error title=Runner has no separate /mnt disk::/mnt is on the root filesystem, so the Unity image and the Library would share one 72 GB disk and this build cannot fit. Re-run the job to draw a different runner. See actions/runner-images#13587."
+            exit 1
+          fi
+          echo "/mnt is a separate disk — proceeding."
+
       # The ~25 GB GameCI image + its container layers otherwise live in /var/lib/docker on the
       # 72 GB root disk, competing with the cold build's workspace (Library + IL2CPP) for space.
-      # Point Docker's data-root at the spare ~73 GB /mnt disk so the root disk is free for the
-      # workspace. Must run before anything pulls the image.
+      # Point Docker's data-root at the ~73 GB /mnt disk — guaranteed separate by the guard above
+      # — so the root disk is free for the workspace. Must run before anything pulls the image.
       - name: Move Docker to /mnt
         if: runner.os == 'Linux'
         run: |
@@ -110,21 +135,33 @@ jobs:
           docker info | grep "Docker Root Dir"
           echo "/mnt free:"; df -h /mnt
 
-      # GameCI's Unity Docker image is 10-20 GB; ubuntu-latest ships only ~14 GB free.
+      # GameCI's Unity Docker image is 25-35 GB and the Library it builds against is ~20 GB.
       # Strip preinstalled host tooling GameCI doesn't need (it builds Android inside its
-      # own container) to avoid "no space left on device". The runner VM is disposable.
+      # own container). The runner VM is disposable. Measured on a 72 GB root: 57 GB used
+      # before, 21 GB after — so this is what buys the headroom, not the /mnt move.
+      #
+      # Deliberately NOT removed: /usr/lib/jvm. Nothing on the host should need it (the build
+      # runs in GameCI's container, and the optional JDK input downloads its own into the
+      # workspace), but it is ~1.5 GB against a real risk of breaking a wrapper that does, and
+      # the margin is not worth buying that way.
       - name: Free up disk space
         if: runner.os == 'Linux'
         run: |
           echo "Before:"; df -h /
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android /opt/hostedtoolcache \
             /usr/local/share/powershell /usr/share/swift /usr/local/julia* /opt/microsoft /usr/share/miniconda \
-            /opt/az /usr/local/lib/node_modules /usr/local/share/chromium /opt/google/chrome /usr/lib/firefox
+            /opt/az /usr/local/lib/node_modules /usr/local/share/chromium /opt/google/chrome /usr/lib/firefox \
+            /opt/pipx /usr/local/share/vcpkg /home/linuxbrew /usr/share/doc /usr/share/man
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
           sudo docker image prune --all --force || true
           echo "After:"; df -h /
 
-      # ~7.8 GB RAM is tight for a cold IL2CPP + clang; a small swap on /mnt is OOM insurance.
-      # Kept at 4 GB to leave room for Docker (Unity 6 images are 25-35 GB) on /mnt.
+      # ~7.8 GB RAM is tight for a cold IL2CPP + clang, so this adds to the ~3 GB the runner
+      # already has. Kept at 4 GB to leave room for Docker (Unity 6 images are 25-35 GB) on /mnt.
+      # It lands on /mnt rather than the root disk on purpose — which only holds because the guard
+      # above proved /mnt is a separate disk. Without that check this was 4 GB taken from the very
+      # disk the build was running out of.
       - name: Add swap (cold-build OOM guard)
         if: runner.os == 'Linux'
         run: |

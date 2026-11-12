@@ -54,11 +54,14 @@ concurrency:
 env:
   MARKER: commit-review/last
   LABEL: commit-review
+  # Read by both --max-turns and the prompt, so the agent is told the budget it actually has.
+  MAX_TURNS: 150
 
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Room for the whole turn cap: at 30 minutes the clock, not the cap, would end a long review.
+    timeout-minutes: 90
     permissions:
       contents: write # move the marker tag
       issues: write # open the findings issue
@@ -137,9 +140,22 @@ jobs:
 
             Restrict every diff you take to this pathspec, passing it after a `--` to git:
             ${{ inputs.review_paths || '(no restriction — the whole repo is in scope)' }}
+
+            You have ${{ env.MAX_TURNS }} turns, a turn being one response of yours however many
+            tool calls it makes, and the structured output has to be returned within them — a
+            review that runs out first is discarded whole. Make independent tool calls in the same
+            turn: when you need several files (the changed ones, what they implement, what calls
+            them), request them together rather than one per turn. Bash is limited to git log,
+            git diff, git show and git ls-files; anything else is refused and still costs the turn,
+            so search with Grep and Glob and open files with Read.
+          # The cap is a runaway guard, not a quota — the agent stops when it is done. But a review
+          # that hits it is discarded and leaves the marker in place, so the next run inherits the
+          # same range plus a day's more and fails again: a cap that a busy stretch can outgrow fails
+          # every day after, not once. 60 held for a 6-file day and broke on PopDrop's 17-file
+          # speed-up feature.
           claude_args: >-
             --model claude-opus-5
-            --max-turns 60
+            --max-turns ${{ env.MAX_TURNS }}
             --allowedTools "Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-files:*)"
             --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"issue_title":{"type":"string"},"issue_body":{"type":"string"}},"required":["has_findings","issue_title","issue_body"],"additionalProperties":false}'
 

@@ -12,9 +12,13 @@ const INPUT = {
 };
 
 const CSV = [
-  "day,installs,cost,secret_column,retention_rate_d1,retention_rate_d7,roas_d0,roas_d7",
-  "2026-03-01,10,20,do-not-ship,0.3,0.1,0.1,0.2",
+  "day,installs,cost,secret_column,retention_rate_d1,retention_rate_d7,roas_d0,roas_d7,all_revenue,gross_profit",
+  "2026-03-01,10,20,do-not-ship,0.3,0.1,0.1,0.2,5,-15",
 ].join("\n");
+
+function bundledCsv(html: string): string {
+  return /<script type="text\/csv" id="bundled-export"[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
+}
 
 function scripts(html: string): string[] {
   return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
@@ -39,8 +43,11 @@ describe("page build", () => {
 
   it("bundles only the columns the page reads", () => {
     const { html, columns } = buildPage({ csv: { text: CSV, name: "2026-03-31_adjust_report_export.csv" } });
-    expect(columns).toBe(7);
+    expect(columns).toBe(8);
+    // Revenue by event date stays: it sizes what installs without spend earn.
+    expect(bundledCsv(html).split("\n")[0]).toBe("day,installs,cost,retention_rate_d1,retention_rate_d7,roas_d0,roas_d7,all_revenue");
     expect(html).not.toContain("secret_column");
     expect(html).not.toContain("do-not-ship");
+    expect(html).not.toContain("gross_profit");
   });
 });

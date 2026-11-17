@@ -22,6 +22,7 @@ export {
   detectSchema,
   loadAdjustExport,
   dimensionValues,
+  selectCohorts,
   aggregateCohorts,
   toDay,
   fromDay,
@@ -39,5 +40,7 @@ export {
   type DayColumn,
   type DimensionValue,
   type ParsedCsv,
+  type RevenueColumns,
   type Skipped,
+  type UnpaidInstalls,
 } from "./adjust.js";

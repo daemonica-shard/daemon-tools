@@ -54,6 +54,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .page { max-width: 1320px; margin: 0 auto; display: grid; gap: 18px; padding-block: 26px 48px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -190,6 +191,11 @@ tr.in-data > * { background: var(--wash-soft); }
 .entry tbody tr + tr > * { border-top: 0; }
 .entry td:first-child .num { width: 64px; }
 .entry .num input { padding-left: 2px; }
+table.mini { table-layout: fixed; font-size: 13px; }
+.mini th, .mini td { padding: 4px 6px; }
+.mini thead th { padding-top: 0; }
+.mini tbody th { font-weight: 400; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.mini .n { width: 76px; }
 .chip { display: inline-block; font-size: 11px; font-weight: 500; line-height: 1.5; padding: 0 7px; border-radius: 999px; background: var(--sunk); color: var(--muted); margin-left: 7px; vertical-align: 1px; font-style: normal; }
 .chip.measured { background: var(--wash); color: var(--accent-ink); }
 .status { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; font-size: 12.5px; }
@@ -262,6 +268,15 @@ tr.in-data > * { background: var(--wash-soft); }
           </table>
         </div>
         <div class="manual-only"><button type="button" class="btn small" id="reseed">Copy from the Adjust selection</button></div>
+      </section>
+      <section class="adjust-only" id="unpaid-section" hidden>
+        <fieldset>
+          <legend>Installs without spend</legend>
+          <p class="hint" id="unpaid-hint"></p>
+          <div class="table-wrap"><table class="mini" id="unpaid-table"></table></div>
+          <label class="opt" for="unpaid-count"><input type="radio" name="unpaid" id="unpaid-count" value="count"><span><span>Count them in the total</span><span class="d" id="d-unpaid-count"></span></span></label>
+          <label class="opt" for="unpaid-paid"><input type="radio" name="unpaid" id="unpaid-paid" value="paid"><span><span>Paid installs only</span><span class="d" id="d-unpaid-paid"></span></span></label>
+        </fieldset>
       </section>
       <section>
         <h2>Targets</h2>
@@ -351,9 +366,10 @@ u       = (ROAS(n₂) − ROAS(n₁)) ÷ (LT(n₂) − LT(n₁))     per window
 ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
         <h3>How an Adjust export is read</h3>
         <ul>
-          <li>Each row is one install day of one campaign. A cohort counts toward day N only when its install date plus N is at least two days before the export date, because the latest day is still filling in.</li>
-          <li>Each later day is chained from the one before it using only cohorts that have finished both days, so a weak early week cannot bend the curve. Retention is weighted by installs, ROAS by spend.</li>
+          <li>Each row is one install day of one segment, such as a campaign. The rows of one install day form a cohort, and a cohort counts toward day N only when its install date plus N is at least two days before the export date, because the latest day is still filling in.</li>
+          <li>Each later day is chained from the one before it using only cohorts that have finished both days, so a weak early week cannot bend the curve. Retention is weighted by installs; ROAS is the selection's revenue divided by its spend.</li>
           <li>A day needs at least 3 finished cohorts carrying 10% of the selection's installs (spend, for ROAS); thinner days are left out and listed under Checks.</li>
+          <li>Installs without spend (organic, untrusted devices, days a campaign reported no cost) have no ROAS of their own, so a total built from ROAS alone leaves their revenue out. When the export has cohort revenue totals for every ROAS day (all_revenue_total_dN, or ad_revenue_total_dN with revenue_total_dN), their revenue counts as it is. Otherwise it is estimated: ROAS rises by what they earned by event date (all_revenue) as a share of what paid installs earned over the same dates, assuming their revenue builds up with player age the same way.</li>
           <li>Day 0 is install day, and Dn ROAS counts revenue from day 0 through day n. Adjust's ROAS includes ad and purchase revenue as the SDK reports it.</li>
         </ul>
       </section>
@@ -378,12 +394,15 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
   var LOG_TICKS = [1, 3, 7, 14, 30, 90, 180, 365, 730];
   var ARP_TICKS = [0, 1, 3, 7, 14, 30, 90, 180, 365, 730];
   var DIM_LABELS = { app: 'App', os_name: 'OS', channel: 'Channel', network: 'Network', partner_name: 'Partner', campaign_network: 'Campaign', campaign: 'Campaign', adgroup_network: 'Ad group', adgroup: 'Ad group', creative_network: 'Creative', creative: 'Creative', country: 'Country', country_code: 'Country', store_type: 'Store' };
+  var DIM_PLURALS = { app: 'apps', os_name: 'platforms', channel: 'channels', network: 'networks', partner_name: 'partners', campaign_network: 'campaigns', campaign: 'campaigns', adgroup_network: 'ad groups', adgroup: 'ad groups', creative_network: 'creatives', creative: 'creatives', country: 'countries', country_code: 'countries', store_type: 'stores' };
+  // Adjust's stand-ins for a missing segment value: organic installs have the campaign "unknown".
+  var PLACEHOLDER = /^(unknown|\(none\))?$/i;
   // Shown when there is no export to start from: [day, retention %, ROAS %].
   var EXAMPLE = [[0, '', '10'], [1, '40', '14'], [3, '27', '19'], [7, '18', '26'], [14, '13', '33']];
   var KEY = 'cohort-roas-forecast/v1';
 
-  var state = { mode: 'adjust', dims: {}, dimsSet: false, from: '', to: '', horizon: 365, driftMode: 'auto', driftCustom: '-10',
-                tailSpread: '0.10', driftSpread: '5', target: '100', cpi: '', rows: null, example: false };
+  var state = { v: 2, mode: 'adjust', dims: {}, dimsSet: false, from: '', to: '', horizon: 365, driftMode: 'auto', driftCustom: '-10',
+                tailSpread: '0.10', driftSpread: '5', target: '100', cpi: '', rows: null, example: false, paidOnly: false };
   var upload = null, data = null, view = null;
 
   function $(id) { return document.getElementById(id); }
@@ -436,6 +455,7 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     return '$' + v.toFixed(3);
   }
   function intFmt(n) { return Math.round(n).toLocaleString('en-US'); }
+  function dollars(v) { return v >= 1 ? '$' + intFmt(v) : v > 0 ? '<$1' : '$0'; }
   function dayLbl(d) { return d == null ? 'after D730' : 'D' + d; }
   function dateLbl(iso) {
     if (!iso) return '';
@@ -456,7 +476,11 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
   function restore() {
     try {
       var s = JSON.parse(localStorage.getItem(KEY) || 'null');
-      if (s && typeof s === 'object') Object.keys(state).forEach(function (k) { if (k in s) state[k] = s[k]; });
+      if (s && typeof s === 'object') {
+        // Saved before v2, when the page opened on the biggest campaign: open on the total instead.
+        if (s.v !== 2) { delete s.dims; delete s.dimsSet; }
+        Object.keys(state).forEach(function (k) { if (k in s && k !== 'v') state[k] = s[k]; });
+      }
     } catch (e) { /* ignore */ }
     try {
       var u = JSON.parse(localStorage.getItem(KEY + ':upload') || 'null');
@@ -468,6 +492,7 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     if (['auto', 'flat', 'trend30', 'trend', 'custom'].indexOf(state.driftMode) < 0) state.driftMode = 'auto';
     if (state.mode !== 'manual') state.mode = 'adjust';
     state.example = state.example === true;
+    state.paidOnly = state.paidOnly === true;
   }
 
   // ---------- data
@@ -499,12 +524,23 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
   function others(k) { var o = {}; Object.keys(state.dims).forEach(function (j) { if (j !== k) o[j] = state.dims[j]; }); return o; }
   function dateFilter() { return { from: state.from ? F.toDay(state.from) : null, to: state.to ? F.toDay(state.to) : null }; }
   function filter() { var f = dateFilter(); f.dims = state.dims; return f; }
+  function withSpend(f, spend) { var o = {}; Object.keys(f).forEach(function (k) { o[k] = f[k]; }); o.spend = spend; return o; }
+  // The filtered selection, and what the forecast runs on: the same without installs that came
+  // without spend when the viewer leaves them out. That choice only exists when both kinds are in.
+  function selection() {
+    var f = filter(), all = F.aggregateCohorts(data, f), u = all.unpaid;
+    var mixed = all.summary.cost > 0 && u.revenue !== 'none' && (u.installs > 0 || u.eventRevenue > 0);
+    var paidOnly = mixed && state.paidOnly;
+    return { filter: f, all: all, agg: paidOnly ? F.aggregateCohorts(data, withSpend(f, 'paid')) : all, mixed: mixed, paidOnly: paidOnly };
+  }
+  // The CPI that turns this ROAS into revenue per install: across every install once theirs counts.
+  function revenueCpi(agg) {
+    var u = agg.unpaid, blended = u.installs > 0 && (u.revenue === 'counted' || u.revenue === 'estimated');
+    return { cpi: blended ? agg.summary.blendedCpi : agg.summary.cpi, blended: blended };
+  }
+  // Opens on the total: every channel and campaign, with and without spend.
   function applyDefaultDims() {
     state.dims = {};
-    visibleDims().forEach(function (k) {
-      var v = F.dimensionValues(data, k, { dims: state.dims });
-      if (v.length && v[0].cost > 0) state.dims[k] = v[0].value;
-    });
     state.dimsSet = true;
   }
 
@@ -518,7 +554,8 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
       var vals = F.dimensionValues(data, k, f);
       if (state.dims[k] && !vals.some(function (v) { return v.value === state.dims[k]; })) delete state.dims[k];
       var sel = h('select', { id: 'dim-' + k });
-      sel.appendChild(h('option', { value: '', text: 'All' }));
+      var spend = vals.reduce(function (sum, v) { return sum + v.cost; }, 0);
+      sel.appendChild(h('option', { value: '', text: 'All ' + (DIM_PLURALS[k] || 'values') + (spend > 0 ? '  ·  ' + money(spend) : '') }));
       vals.forEach(function (v) {
         sel.appendChild(h('option', { value: v.value, text: v.value + '  ·  ' + (v.cost > 0 ? money(v.cost) : 'no spend') }));
       });
@@ -539,13 +576,61 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     });
   }
 
-  function renderSummary(agg) {
-    var s = agg.summary, el = $('summary');
+  function renderSummary(sel, c) {
+    var s = sel.agg.summary, el = $('summary');
     if (!s.rows) { el.textContent = 'No cohorts match these filters.'; return; }
-    var parts = [dateLbl(s.first) + ' – ' + dateLbl(s.last), s.cohortDays + ' install days', intFmt(s.installs) + ' installs'];
-    if (s.cost > 0) parts.push(money(s.cost) + ' spend', 'CPI ' + money(s.cpi));
+    var parts = [];
+    if (!Object.keys(state.dims).length) parts.push(sel.paidOnly ? 'All paid traffic' : 'All traffic');
+    parts.push(dateLbl(s.first) + ' – ' + dateLbl(s.last), s.cohortDays + ' install days', intFmt(s.installs) + ' installs');
+    if (s.cost > 0) parts.push(money(s.cost) + ' spend', 'CPI ' + money(c.cpi) + (c.blended ? ' across all installs' : ''));
     parts.push('cohort days count through ' + dateLbl(F.fromDay(data.completeThrough)));
     el.textContent = parts.join('  ·  ');
+  }
+
+  // ---------- installs without spend
+  // Grouped by their most specific real segment value: the campaign, or the channel for organic.
+  function unpaidSources(f) {
+    var dims = data.schema.dims.slice().reverse(), groups = {}, list = [];
+    F.selectCohorts(data, withSpend(f, 'unpaid')).forEach(function (c) {
+      var label = 'Unsegmented';
+      for (var i = 0; i < dims.length; i++) { if (!PLACEHOLDER.test(c.dims[dims[i]])) { label = c.dims[dims[i]]; break; } }
+      var g = groups[label] || (groups[label] = { label: label, installs: 0, revenue: 0 });
+      g.installs += c.installs;
+      g.revenue += c.eventRevenue;
+    });
+    Object.keys(groups).forEach(function (k) { list.push(groups[k]); });
+    return list.sort(function (a, b) { return b.revenue - a.revenue || b.installs - a.installs; });
+  }
+
+  function renderUnpaid(sel) {
+    $('unpaid-section').hidden = !sel.mixed;
+    if (!sel.mixed) return;
+    var u = sel.all.unpaid, s = sel.all.summary, hasRev = data.schema.eventRevenue.length > 0;
+    var text = intFmt(u.installs) + ' of ' + intFmt(s.installs) + ' installs came without spend.';
+    if (hasRev && u.paidEventRevenue > 0) text += ' By event date they earned ' + money(u.eventRevenue) + ' over these dates, ' +
+      pct(u.eventRevenue / u.paidEventRevenue) + ' on top of the ' + money(u.paidEventRevenue) + ' from paid installs.';
+    $('unpaid-hint').textContent = text;
+    var t = $('unpaid-table'), list = unpaidSources(sel.filter);
+    t.textContent = '';
+    var cols = [h('th', { scope: 'col', text: 'Source' }), h('th', { scope: 'col', class: 'n', text: 'Installs' })];
+    if (hasRev) cols.push(h('th', { scope: 'col', class: 'n', text: 'Revenue' }));
+    t.appendChild(h('thead', null, [h('tr', null, cols)]));
+    var shown = list.length > 5 ? list.slice(0, 4) : list, rest = list.slice(shown.length), tb = h('tbody');
+    if (rest.length) shown = shown.concat([rest.reduce(function (a, g) { a.installs += g.installs; a.revenue += g.revenue; return a; },
+      { label: rest.length + ' more', installs: 0, revenue: 0 })]);
+    shown.forEach(function (g) {
+      var cells = [h('th', { scope: 'row', title: g.label, text: g.label }), h('td', { text: intFmt(g.installs) })];
+      if (hasRev) cells.push(h('td', { text: dollars(g.revenue) }));
+      tb.appendChild(h('tr', null, cells));
+    });
+    t.appendChild(tb);
+    $('d-unpaid-count').textContent = u.revenue === 'estimated'
+      ? 'Adds an estimated ' + pct(u.uplift) + ' to ROAS. The export has no cohort revenue for them, so theirs is assumed to build up with player age like paid revenue.'
+      : u.revenue === 'counted' ? 'Their revenue comes from the export\'s cohort revenue columns.'
+      : 'Retention only: the export has no revenue for them, so ROAS stays paid revenue over spend.';
+    $('d-unpaid-paid').textContent = 'Retention and ROAS from the ' + intFmt(s.installs - u.installs) + ' paid installs.';
+    $('unpaid-count').checked = !sel.paidOnly;
+    $('unpaid-paid').checked = sel.paidOnly;
   }
 
   function renderEyebrow() {
@@ -591,11 +676,13 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
         h('td', { class: 'dim', text: x.n ? String(x.n) : '—' })
       ]));
     });
-    $('curve-sub').textContent = 'Weighted across the selected install days. Each day uses only the cohorts that have finished it.';
+    var u = agg.unpaid;
+    $('curve-sub').textContent = 'Weighted across the selected install days. Each day uses only the cohorts that have finished it.' +
+      (u.revenue === 'estimated' && u.uplift > 0 ? ' ROAS includes the estimated ' + pct(u.uplift) + ' from installs without spend.' : '');
   }
 
   function seedRows() {
-    var agg = data ? F.aggregateCohorts(data, filter()) : null, map = {};
+    var agg = data ? selection().agg : null, map = {};
     function row(d) { return map[d] || (map[d] = { day: String(d), ret: '', roas: '' }); }
     function trim(v) { return String(Math.round(v * 100) / 100); }
     row(0);
@@ -686,12 +773,13 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     save();
     var input, meta;
     if (state.mode === 'adjust' && data) {
-      var agg = F.aggregateCohorts(data, filter());
+      var sel = selection(), agg = sel.agg, c = revenueCpi(agg);
       input = { retention: agg.retention, roas: agg.roas };
-      meta = { agg: agg, cpi: agg.summary.cpi };
+      meta = { agg: agg, sel: sel, cpi: c.cpi };
       renderAdjustTable(agg);
-      renderSummary(agg);
-      $('cpi-static').textContent = agg.summary.cpi ? money(agg.summary.cpi) + ' (spend ÷ paid installs)' : 'no spend selected';
+      renderSummary(sel, c);
+      renderUnpaid(sel);
+      $('cpi-static').textContent = c.cpi ? money(c.cpi) + (c.blended ? ' (spend ÷ all installs)' : ' (spend ÷ paid installs)') : 'no spend selected';
     } else {
       input = manualInput();
       var c = num(state.cpi, NaN);
@@ -726,7 +814,7 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
       if (!s.rows) msg = 'No cohorts match these filters. Pick another campaign or widen the install dates.';
       else {
         if (r.needRetention) bits.push(a.retention.length === 1 ? 'only D1 retention has enough finished cohorts' : 'retention has no day with enough finished cohorts');
-        if (r.needRoas) bits.push(s.cost > 0 ? 'no ROAS day has enough finished cohorts' : 'this selection has no spend, so ROAS is undefined');
+        if (r.needRoas) bits.push(s.cost > 0 ? 'no ROAS day has enough finished cohorts' : 'there is no spend, so ROAS is undefined');
         var sk = a.skipped.retention || a.skipped.roas;
         msg = 'The forecast needs retention for at least two days and ROAS for at least one. In this selection ' + bits.join(', and ') + '.' +
           (sk ? ' D' + sk.day + ' has ' + sk.cohorts + ' finished cohort' + (sk.cohorts === 1 ? '' : 's') + ' (' + Math.round(sk.share * 100) + '% of the sample); it needs 3 and 10%.' : '') +
@@ -932,7 +1020,9 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
         return { head: 'D' + d + ' · ' + status(d, r.roas, last), items: items };
       }
     });
-    $('roas-sub').textContent = 'Dots are measured, the line is the forecast, and the shading is the range. Dashed line: break-even at ' + pct(target) + '.';
+    var u = meta.agg ? meta.agg.unpaid : null;
+    $('roas-sub').textContent = 'Dots are measured, the line is the forecast, and the shading is the range. Dashed line: break-even at ' + pct(target) + '.' +
+      (u && u.revenue === 'estimated' && u.uplift > 0 ? ' Includes an estimated ' + pct(u.uplift) + ' from installs without spend.' : '');
   }
 
   function drawRet() {
@@ -1115,8 +1205,15 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
         ' finished it (' + Math.round(sk.retention.share * 100) + '% of installs). It joins once 3 cohorts and 10% of installs reach D' + sk.retention.day + '.');
       if (sk.roas) item('info', 'D' + sk.roas.day + ' ROAS is left out: only ' + sk.roas.cohorts + ' cohort' + (sk.roas.cohorts === 1 ? ' has' : 's have') +
         ' finished it (' + Math.round(sk.roas.share * 100) + '% of spend).');
-      var s = meta.agg.summary;
-      if (s.unpaidInstalls > 0 && s.cost > 0) item('info', intFmt(s.unpaidInstalls) + ' installs in this selection have no spend (organic or untrusted). They count toward retention, not ROAS.');
+      var sel = meta.sel, u = sel.all.unpaid;
+      if (sel.paidOnly) item('info', intFmt(u.installs) + ' installs without spend are left out, so retention and ROAS cover paid installs only.');
+      else if (sel.mixed && u.revenue === 'estimated') {
+        var big = u.uplift > 0.25;
+        item(big ? 'warn' : 'info', 'ROAS includes an estimated ' + pct(u.uplift) + ' from ' + intFmt(u.installs) + ' installs without spend, sized by what they earned by event date.' +
+          (big ? ' That share is large enough that the estimate drives the result.' : '') +
+          ' To count it exactly, export cohort revenue totals for the same days as ROAS (all_revenue_total_dN, or ad_revenue_total_dN with revenue_total_dN).');
+      } else if (sel.mixed && u.revenue === 'counted') item('info', 'ROAS counts revenue from ' + intFmt(u.installs) + ' installs without spend, read from the export\'s cohort revenue columns.');
+      else if (sel.mixed) item('warn', intFmt(u.installs) + ' installs without spend count toward retention, but the export has no revenue for them, so ROAS covers paid revenue only. Add all_revenue to the export to estimate theirs.');
     }
     r.notes.forEach(function (n) { item(n.level === 'warn' ? 'warn' : 'info', n.text); });
     if (!ul.children.length) item('info', 'Add more days to get hold-out checks: the model predicts your last point from the earlier ones.');
@@ -1197,6 +1294,9 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
       i.addEventListener('change', function () { if (i.checked) { state.driftMode = i.value; update(); } });
     });
     $('drift-custom-val').addEventListener('input', function (e) { state.driftCustom = e.target.value; state.driftMode = 'custom'; update(); });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="unpaid"]'), function (i) {
+      i.addEventListener('change', function () { if (i.checked) { state.paidOnly = i.value === 'paid'; update(); } });
+    });
     Array.prototype.forEach.call(document.querySelectorAll('#horizon button'), function (b) {
       b.addEventListener('click', function () {
         state.horizon = Number(b.getAttribute('data-h'));

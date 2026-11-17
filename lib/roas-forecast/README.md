@@ -29,6 +29,12 @@ The export it expects is Adjust's report export **grouped by day**. It needs `in
 `app`, `channel`, `campaign_network`, `country` … present become filters. Keep the date Adjust
 puts in the file name: the page uses it to tell finished cohort days from ones still filling in.
 
+The page opens on the **total**: every channel and campaign, including installs without spend
+(organic, untrusted devices like Adjust's Anomaly bucket). Their revenue isn't in `roas_dN`
+because they have no cost, so add `all_revenue` to the export to estimate it (see below), or
+cohort revenue totals for every ROAS day to count it exactly: `all_revenue_total_dN`, or
+`ad_revenue_total_dN` with `revenue_total_dN` (Adjust's `revenue_total` is in-app purchases only).
+
 ## The library
 
 ```ts
@@ -39,6 +45,10 @@ if (data.ok) {
   const curve = aggregateCohorts(data, { dims: { campaign_network: "My_tROAS_D7_campaign" } });
   const f = forecast(curve, { target: 1 });
   if (f.ok) console.log(f.base.roas[365], f.base.payback, f.band.paybackHigh, f.band.paybackLow);
+
+  const total = aggregateCohorts(data); // every row, installs without spend included
+  console.log(total.unpaid.revenue, total.unpaid.uplift, total.summary.blendedCpi);
+  const paid = aggregateCohorts(data, { spend: "paid" }); // only rows with spend
 }
 ```
 
@@ -78,13 +88,28 @@ move payback by months.
 - **Finished days only.** Cells for days that haven't finished are partial: the export day reads
   near zero and the day before still runs low. A cohort counts toward day N only when
   `install date + N ≤ export date − 2`.
+- **Cohorts are install days.** The rows of one install day (one per campaign, channel …) form
+  one cohort.
 - **Chain-ladder.** Older days have fewer finished cohorts, and they can be a different mix (a
   weak launch week). Averaged per day, that mix bends the curve. Instead, each later day
   multiplies the previous one by the growth seen in cohorts that finished both. Retention is
-  weighted by installs, ROAS by spend.
+  weighted by installs; ROAS is the selection's revenue ÷ its spend.
 - **Thin days are dropped.** A day needs ≥ 3 finished cohorts carrying ≥ 10% of the selection's
   installs (spend, for ROAS); the curve stops at the first day that doesn't, and `skipped` says
   which.
+- **Installs without spend** have no ROAS of their own, so a total built from `roas_dN` alone
+  misses their revenue. `unpaid.revenue` says how they were handled:
+  - `counted`: the export has cohort revenue totals for every ROAS day, so ROAS is revenue ÷
+    spend over every row.
+  - `estimated`: ROAS is raised by `unpaid.uplift`, their revenue by event date (`all_revenue`,
+    or `ad_revenue` + `revenue`) as a share of paid installs' over the same dates. This assumes
+    their revenue builds up with player age the way paid revenue does. Revenue by event date
+    can include players who installed before the export's first day, on both sides of the
+    ratio.
+  - `missing`: neither, so they count toward retention only.
+
+  Once their revenue counts, pair ROAS with `summary.blendedCpi` (spend ÷ all installs), not
+  `summary.cpi` (spend ÷ paid installs).
 - Day 0 is install day, and `roas_dN` counts revenue from day 0 through day N.
 
 ## Tests

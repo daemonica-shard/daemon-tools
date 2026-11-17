@@ -4,6 +4,7 @@ import {
   dimensionValues,
   loadAdjustExport,
   parseCsv,
+  selectCohorts,
   toDay,
   type AdjustExport,
 } from "../src/adjust.js";
@@ -62,6 +63,11 @@ describe("loadAdjustExport", () => {
     expect(data.completeThrough).toBe(toDay("2026-03-29"));
   });
 
+  it("counts cohort days past the last install date when the name dates the export", () => {
+    const older = load("day,installs,cost,roas_d0,retention_rate_d1\n2026-03-01,5,10,0.1,0.3");
+    expect(older.completeThrough).toBe(toDay("2026-03-29"));
+  });
+
   it("assumes the day after the latest install when the name has no date", () => {
     const data = load(CSV, "report.csv");
     expect(data.exportDateGuessed).toBe(true);
@@ -112,10 +118,27 @@ describe("aggregateCohorts", () => {
     expect(curve.skipped.retention).toBeNull();
   });
 
-  it("summarises the selection, CPI over paid installs only", () => {
-    expect(curve.summary).toMatchObject({ rows: 7, cohortDays: 7, installs: 350, unpaidInstalls: 0, cost: 700, cpi: 2 });
+  it("summarises the selection, CPI over paid installs and over all of them", () => {
+    expect(curve.summary).toMatchObject({ rows: 7, cohortDays: 7, installs: 350, unpaidInstalls: 0, cost: 700, cpi: 2, blendedCpi: 2 });
     const all = aggregateCohorts(load());
     expect(all.summary).toMatchObject({ installs: 370, unpaidInstalls: 20, cost: 700, cpi: 2 });
+    expect(all.summary.blendedCpi).toBeCloseTo(700 / 370, 12);
+  });
+
+  it("counts install days, not rows, toward the 3-cohort minimum", () => {
+    // Two segments on 03-01 and on 03-02 finish D7: four rows, but two install days.
+    const text = [
+      "day,channel,installs,cost,roas_d0,roas_d7,retention_rate_d1,retention_rate_d7",
+      "2026-03-01,A,50,100,0.1,0.2,0.3,0.1",
+      "2026-03-01,B,50,100,0.1,0.2,0.3,0.1",
+      "2026-03-02,A,50,100,0.1,0.2,0.3,0.1",
+      "2026-03-02,B,50,100,0.1,0.2,0.3,0.1",
+      "2026-03-25,A,50,100,0.1,0,0.3,0",
+    ].join("\n");
+    const two = aggregateCohorts(load(text));
+    expect(two.roas.map((p) => [p.day, p.cohorts])).toEqual([[0, 3]]);
+    expect(two.skipped.roas).toEqual({ day: 7, cohorts: 2, share: 0.8 });
+    expect(two.skipped.retention).toEqual({ day: 7, cohorts: 2, share: 0.8 });
   });
 
   it("filters by install date", () => {
@@ -133,5 +156,83 @@ describe("dimensionValues", () => {
       ["Organic", 0],
     ]);
     expect(dimensionValues(data, "campaign_network", { dims: { channel: "Organic" } }).map((v) => v.value)).toEqual(["unknown"]);
+  });
+});
+
+describe("installs without spend", () => {
+  // The same export with revenue by event date: every paid row earned 30, the organic row 21.
+  const WITH_EVENTS = [HEADER + ",all_revenue", ...ROWS.map((r) => r + (r.includes(",Organic,") ? ",21" : ",30"))].join("\n");
+
+  it("raises ROAS by what they earned by event date, as a share of what paid installs earned", () => {
+    const all = aggregateCohorts(load(WITH_EVENTS));
+    expect(all.unpaid).toEqual({ installs: 20, revenue: "estimated", eventRevenue: 21, paidEventRevenue: 210, uplift: 0.1 });
+    expect(all.roas.map((p) => p.value)).toEqual([0.15, 0.3, 0.375].map((v) => expect.closeTo(v * 1.1, 12)));
+  });
+
+  it("counts every install toward retention, one cohort per install day", () => {
+    // 03-01 holds a paid row and the organic one: one cohort of 70 installs.
+    const all = aggregateCohorts(load(WITH_EVENTS));
+    expect(all.retention[0].cohorts).toBe(6);
+    expect(all.retention[0].value).toBeCloseTo(115 / 320, 12);
+  });
+
+  it("leaves them out on request", () => {
+    const paid = aggregateCohorts(load(WITH_EVENTS), { spend: "paid" });
+    expect(paid.unpaid.revenue).toBe("none");
+    expect(paid.summary).toMatchObject({ installs: 350, unpaidInstalls: 0 });
+    expect(paid.roas[0].value).toBeCloseTo(0.15, 12);
+    expect(paid.retention[0].value).toBeCloseTo(105 / 300, 12);
+    expect(selectCohorts(load(WITH_EVENTS), { spend: "unpaid" }).map((c) => c.dims.channel)).toEqual(["Organic"]);
+  });
+
+  it("says so when the export has no revenue for them", () => {
+    const all = aggregateCohorts(load());
+    expect(all.unpaid).toMatchObject({ installs: 20, revenue: "missing", uplift: 0 });
+    expect(all.roas[0].value).toBeCloseTo(0.15, 12);
+  });
+
+  it("counts their revenue as it is when the export has cohort revenue", () => {
+    // Paid: 10 by D0 and 20 by D7 on 100 of spend. Organic: 3 by D0, 6 by D7, no spend.
+    const text = [
+      "day,channel,installs,cost,roas_d0,roas_d7,ad_revenue_total_d0,revenue_total_d0,ad_revenue_total_d7,revenue_total_d7,retention_rate_d1,retention_rate_d7",
+      "2026-03-01,Paid,50,100,0.1,0.2,9,1,18,2,0.3,0.1",
+      "2026-03-02,Paid,50,100,0.1,0.2,9,1,18,2,0.3,0.1",
+      "2026-03-03,Paid,50,100,0.1,0.2,9,1,18,2,0.3,0.1",
+      "2026-03-01,Organic,20,0,0,0,3,0,6,0,0.5,0.2",
+    ].join("\n");
+    const data = load(text);
+    expect(data.schema.cohortRevenue).toEqual([
+      { day: 0, cols: ["ad_revenue_total_d0", "revenue_total_d0"] },
+      { day: 7, cols: ["ad_revenue_total_d7", "revenue_total_d7"] },
+    ]);
+    const all = aggregateCohorts(data);
+    expect(all.unpaid).toMatchObject({ installs: 20, revenue: "counted", uplift: 0 });
+    expect(all.roas.map((p) => p.value)).toEqual([expect.closeTo(33 / 300, 12), expect.closeTo(66 / 300, 12)]);
+    const paid = aggregateCohorts(data, { spend: "paid" });
+    expect(paid.roas.map((p) => p.value)).toEqual([expect.closeTo(0.1, 12), expect.closeTo(0.2, 12)]);
+  });
+
+  it("reads cohort revenue only when it covers every ROAS day, and never in-app revenue alone", () => {
+    const partial = load("day,installs,cost,roas_d0,roas_d7,ad_revenue_total_d0,revenue_total_d0,retention_rate_d1\n2026-03-01,5,10,0.1,0.2,1,0,0.3");
+    expect(partial.schema.cohortRevenue).toEqual([]);
+    const inApp = load("day,installs,cost,roas_d0,revenue_total_d0,retention_rate_d1\n2026-03-01,5,10,0.1,0,0.3");
+    expect(inApp.schema.cohortRevenue).toEqual([]);
+    const all = load("day,installs,cost,roas_d0,all_revenue_total_d0,retention_rate_d1\n2026-03-01,5,10,0.1,1,0.3");
+    expect(all.schema.cohortRevenue).toEqual([{ day: 0, cols: ["all_revenue_total_d0"] }]);
+  });
+
+  it("sizes the estimate with revenue of the same kind as ROAS", () => {
+    const cols = (header: string, row: string) => load(`${header}\n${row}`).schema.eventRevenue;
+    expect(cols("day,installs,cost,roas_d0,all_revenue,ad_revenue,revenue,retention_rate_d1", "2026-03-01,5,10,0.1,3,2,1,0.3")).toEqual(["all_revenue"]);
+    expect(cols("day,installs,cost,roas_d0,ad_revenue,revenue,retention_rate_d1", "2026-03-01,5,10,0.1,2,1,0.3")).toEqual(["ad_revenue", "revenue"]);
+    expect(cols("day,installs,cost,roas_d0,ad_revenue,retention_rate_d1", "2026-03-01,5,10,0.1,2,0.3")).toEqual([]);
+    expect(cols("day,installs,cost,roas_ad_d0,ad_revenue,all_revenue,retention_rate_d1", "2026-03-01,5,10,0.1,2,3,0.3")).toEqual(["ad_revenue"]);
+  });
+
+  it("adds revenue by event date to segment values", () => {
+    expect(dimensionValues(load(WITH_EVENTS), "channel").map((v) => [v.value, v.eventRevenue])).toEqual([
+      ["Paid", 210],
+      ["Organic", 21],
+    ]);
   });
 });

@@ -1,0 +1,1248 @@
+<title>Cohort ROAS Forecast</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: a two-pane workbench. The cohort curve and the assumptions sit in a narrow left pane,
+   the forecast stacks on the right (summary tiles, curve, the two curves it is built from, tables).
+   One column under 960px. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --sunk: #edf0f4;
+  --sunk-2: #e3e8ee;
+  --ink: #101823;
+  --ink-2: #485366;
+  --muted: #6c7788;
+  --line: #e1e6ed;
+  --axis: #c2c9d4;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --lead-bg: #1c5cab;
+  --wash: rgba(42, 120, 214, 0.15);
+  --wash-soft: rgba(42, 120, 214, 0.08);
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warn: #fab219;
+  --warn-ink: #7a5200;
+  --crit: #d03b3b;
+  --crit-ink: #ad2c2c;
+  --ring: 0 0 0 1px rgba(16, 24, 35, 0.07), 0 1px 2px rgba(16, 24, 35, 0.05);
+  --pop: 0 6px 20px rgba(16, 24, 35, 0.14), 0 0 0 1px rgba(16, 24, 35, 0.08);
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0f14; --surface: #141920; --sunk: #1b212a; --sunk-2: #232a35;
+    --ink: #e7ecf2; --ink-2: #b0bac7; --muted: #8692a3; --line: #252c37; --axis: #3a4350;
+    --accent: #3987e5; --accent-ink: #8dbcf1; --lead-bg: #184f95; --wash: rgba(57, 135, 229, 0.24); --wash-soft: rgba(57, 135, 229, 0.12);
+    --good: #0ca30c; --good-ink: #3cc43c; --warn: #fab219; --warn-ink: #fab219; --crit: #e66767; --crit-ink: #f08c8c;
+    --ring: 0 0 0 1px rgba(255, 255, 255, 0.07); --pop: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0f14; --surface: #141920; --sunk: #1b212a; --sunk-2: #232a35;
+  --ink: #e7ecf2; --ink-2: #b0bac7; --muted: #8692a3; --line: #252c37; --axis: #3a4350;
+  --accent: #3987e5; --accent-ink: #8dbcf1; --lead-bg: #184f95; --wash: rgba(57, 135, 229, 0.24); --wash-soft: rgba(57, 135, 229, 0.12);
+  --good: #0ca30c; --good-ink: #3cc43c; --warn: #fab219; --warn-ink: #fab219; --crit: #e66767; --crit-ink: #f08c8c;
+  --ring: 0 0 0 1px rgba(255, 255, 255, 0.07); --pop: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.page { max-width: 1320px; margin: 0 auto; display: grid; gap: 18px; padding-block: 26px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { .tile, .plot svg { transition: opacity .2s ease; } }
+
+/* Masthead */
+.masthead { display: grid; gap: 6px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(26px, 3.4vw, 36px); line-height: 1.08; letter-spacing: -0.015em; margin: 0; text-wrap: balance; }
+.lede { margin: 4px 0 0; max-width: 74ch; color: var(--ink-2); text-wrap: pretty; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 17px; line-height: 1.25; margin: 0; letter-spacing: -0.005em; text-wrap: balance; }
+.sub, .hint { font-size: 13px; color: var(--ink-2); margin: 3px 0 0; max-width: 72ch; text-wrap: pretty; }
+.hint { color: var(--muted); }
+
+/* Controls */
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 14px; padding: 14px 16px; background: var(--surface); border-radius: 12px; box-shadow: var(--ring); }
+#dim-fields { display: contents; }
+.field { display: grid; gap: 4px; min-width: 0; align-content: start; }
+.field.dim { flex: 1 1 180px; max-width: 300px; }
+.field.dim.wide { flex: 2 1 300px; max-width: 520px; }
+.lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
+select, input[type="date"], input[type="text"], input[type="number"] {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--sunk); border: 1px solid transparent; border-radius: 8px; padding: 7px 10px; min-width: 0; max-width: 100%; }
+select { width: 100%; text-overflow: ellipsis; }
+select:hover, input[type="date"]:hover { background: var(--sunk-2); }
+.summary { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.error { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--crit-ink); }
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunk); border-radius: 9px; max-width: 100%; }
+.seg button { font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink-2); background: transparent; border: 0; border-radius: 7px; padding: 5px 11px; cursor: pointer; white-space: nowrap; }
+.seg button:hover { color: var(--ink); }
+.seg button:disabled { opacity: 0.45; cursor: default; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--ring); }
+.btn { font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink); background: var(--sunk); border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; display: inline-block; white-space: nowrap; }
+.btn:hover { background: var(--sunk-2); }
+.btn.small { font-size: 13px; padding: 5px 10px; }
+.upload-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.upload-row:focus-within label.btn { outline: 2px solid var(--accent); outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.is-manual .adjust-only { display: none !important; }
+body:not(.is-manual) .manual-only { display: none !important; }
+
+/* Workbench */
+.workbench { display: grid; grid-template-columns: minmax(292px, 350px) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 960px) { .workbench { grid-template-columns: minmax(0, 1fr); } }
+.pane { background: var(--surface); border-radius: 12px; box-shadow: var(--ring); padding: 16px; display: grid; gap: 0; min-width: 0; }
+.pane > section { display: grid; gap: 10px; padding-block: 16px; min-width: 0; }
+.pane > section:first-child { padding-top: 2px; }
+.pane > section:last-child { padding-bottom: 2px; }
+.pane > section + section { border-top: 1px solid var(--line); }
+.pane h2 { font-size: 15.5px; }
+.pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.static { font-size: 14px; padding: 7px 0; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.num { display: flex; align-items: center; background: var(--sunk); border: 1px solid transparent; border-radius: 8px; min-width: 0; }
+.num:hover { background: var(--sunk-2); }
+.num:focus-within { border-color: var(--accent); }
+.num.invalid { border-color: var(--crit); }
+.num input { background: transparent; border: 0; padding: 6px 4px 6px 8px; width: 100%; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.num input:focus-visible { outline: none; }
+.num .unit { color: var(--muted); font-size: 12.5px; padding-right: 8px; }
+.num .unit.pre { padding: 0 0 0 8px; }
+.num.inline { display: inline-flex; width: 84px; vertical-align: middle; margin: 0 4px; }
+.icon-btn { font: inherit; font-size: 16px; line-height: 1; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.icon-btn:hover { background: var(--sunk); color: var(--ink); }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 9px; min-width: 0; }
+legend { font-family: var(--font-display); font-weight: 600; font-size: 15.5px; padding: 0; margin-bottom: 2px; }
+.opt { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 14px; cursor: pointer; }
+.opt input[type="radio"] { margin: 3px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.opt .d { display: block; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.opt.disabled { opacity: 0.5; cursor: default; }
+details summary { cursor: pointer; font-size: 13.5px; font-weight: 500; color: var(--ink-2); }
+details[open] summary { margin-bottom: 10px; }
+details .hint { margin-top: 8px; }
+
+/* Results */
+.results { display: grid; gap: 16px; min-width: 0; }
+#filled { display: grid; gap: 16px; min-width: 0; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 680px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border-radius: 12px; box-shadow: var(--ring); padding: 13px 15px 14px; display: grid; gap: 1px; align-content: start; min-width: 0; }
+.tile .k { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.tile .v { font-size: 28px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.2; }
+.tile .r { font-size: 12.5px; color: var(--ink-2); }
+.tile.lead { background: var(--lead-bg); box-shadow: none; }
+.tile.lead .k, .tile.lead .r { color: rgba(255, 255, 255, 0.86); }
+.tile.lead .v { color: #ffffff; }
+.card { background: var(--surface); border-radius: 12px; box-shadow: var(--ring); padding: 16px 18px; min-width: 0; display: grid; gap: 12px; align-content: start; }
+.card-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; }
+.card-head > div { min-width: 0; flex: 1 1 280px; }
+.two-up { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 780px) { .two-up { grid-template-columns: minmax(0, 1fr); } }
+.empty { color: var(--ink-2); }
+.empty h2 { color: var(--ink); }
+
+/* Charts */
+.plot { position: relative; width: 100%; min-width: 0; border-radius: 6px; }
+.plot svg { display: block; overflow: visible; }
+.plot:focus-visible { outline-offset: 4px; }
+.grid line { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.axis-base, .tick-mark { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+.tick { fill: var(--muted); font-size: 11px; font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+.band { fill: var(--wash); stroke: none; }
+.series { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.obs { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.target { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 4 4; }
+.chart-label { fill: var(--ink-2); font-size: 11.5px; font-weight: 500; font-family: var(--font-body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.payback-dot { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
+.cross { stroke: var(--ink-2); stroke-width: 1; shape-rendering: crispEdges; }
+.hover-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.hit { fill: transparent; cursor: crosshair; }
+.tip { position: absolute; top: 0; left: 0; pointer-events: none; background: var(--surface); color: var(--ink); border-radius: 8px; box-shadow: var(--pop); padding: 8px 10px; font-size: 12.5px; line-height: 1.4; min-width: 150px; max-width: 240px; z-index: 3; }
+.tip .t-day { color: var(--muted); font-size: 11.5px; margin-bottom: 3px; }
+.tip .t-row { display: flex; align-items: baseline; gap: 7px; }
+.tip .t-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip .t-lbl { color: var(--ink-2); }
+.tip .key { width: 12px; height: 2px; border-radius: 1px; background: var(--accent); flex: none; align-self: center; }
+.tip .key.band-key { height: 8px; background: var(--wash); }
+
+/* Tables */
+.table-wrap { overflow-x: auto; min-width: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+thead th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+thead th:first-child { text-align: left; }
+tbody th { text-align: left; font-weight: 500; color: var(--ink); padding: 7px 8px; white-space: nowrap; }
+td { text-align: right; padding: 7px 8px; white-space: nowrap; }
+tbody tr + tr > * { border-top: 1px solid var(--line); }
+td.strong { font-weight: 600; }
+td.dim, span.dim { color: var(--muted); }
+td.fc { color: var(--muted); font-style: italic; }
+tr.in-data > * { background: var(--wash-soft); }
+.entry thead th { padding: 4px 4px 6px; }
+.entry tbody th, .entry td { padding: 4px; }
+.entry tbody tr + tr > * { border-top: 0; }
+.entry td:first-child .num { width: 64px; }
+.entry .num input { padding-left: 2px; }
+.chip { display: inline-block; font-size: 11px; font-weight: 500; line-height: 1.5; padding: 0 7px; border-radius: 999px; background: var(--sunk); color: var(--muted); margin-left: 7px; vertical-align: 1px; font-style: normal; }
+.chip.measured { background: var(--wash); color: var(--accent-ink); }
+.status { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; font-size: 12.5px; }
+.status svg { width: 14px; height: 14px; flex: none; }
+.status.good { color: var(--good-ink); }
+.status.bad { color: var(--crit-ink); }
+
+/* Notes */
+.notes { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.notes li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; font-size: 13.5px; color: var(--ink-2); align-items: start; }
+.notes svg { width: 16px; height: 16px; margin-top: 2px; }
+.notes .good svg { color: var(--good); }
+.notes .warn svg { color: var(--warn); }
+.notes .bad svg { color: var(--crit); }
+.notes .info svg { color: var(--muted); }
+
+/* Method */
+.method { gap: 14px; }
+.method ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; max-width: 78ch; }
+.method li { padding-left: 4px; color: var(--ink-2); }
+.method li strong { color: var(--ink); font-weight: 600; }
+.method h3 { font-size: 14px; font-weight: 600; margin: 4px 0 0; }
+.method ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 78ch; color: var(--ink-2); font-size: 14px; }
+.formula { font-family: var(--font-mono); font-size: 13px; line-height: 1.7; background: var(--sunk); border-radius: 8px; padding: 10px 14px; overflow-x: auto; white-space: pre; color: var(--ink); margin: 0; }
+.foot { font-size: 12.5px; color: var(--muted); max-width: 90ch; }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <div class="eyebrow" id="eyebrow">Cohort economics</div>
+    <h1>Cohort ROAS Forecast</h1>
+    <p class="lede">Retention says how many more days an install will play. The ROAS you already have says what one of those days earns. Carried forward together, they give the ROAS curve, the payback day, and the ROAS a campaign needs at D7 to break even.</p>
+  </header>
+
+  <div class="filters" role="group" aria-label="Data source">
+    <div class="field">
+      <span class="lbl" id="src-lbl">Data</span>
+      <div class="seg" role="group" aria-labelledby="src-lbl">
+        <button type="button" id="src-adjust" aria-pressed="true">Adjust export</button>
+        <button type="button" id="src-manual" aria-pressed="false">Manual entry</button>
+      </div>
+    </div>
+    <div id="dim-fields" class="adjust-only"></div>
+    <label class="field adjust-only" for="date-from"><span class="lbl">Installs from</span><input type="date" id="date-from"></label>
+    <label class="field adjust-only" for="date-to"><span class="lbl">Installs to</span><input type="date" id="date-to"></label>
+    <div class="field">
+      <span class="lbl">Export file</span>
+      <div class="upload-row">
+        <label class="btn" for="file-input">Load export…</label>
+        <input type="file" id="file-input" accept=".csv,text/csv" class="visually-hidden">
+        <button type="button" class="btn" id="use-bundled" hidden>Use bundled file</button>
+      </div>
+    </div>
+    <p class="summary adjust-only" id="summary"></p>
+    <p class="error" id="upload-error" role="alert" hidden></p>
+  </div>
+
+  <div class="workbench">
+    <aside class="pane" aria-label="Cohort curve and assumptions">
+      <section>
+        <div class="pane-head">
+          <h2>Cohort curve</h2>
+          <button type="button" class="btn small manual-only" id="add-row">Add day</button>
+        </div>
+        <p class="hint" id="curve-sub"></p>
+        <div class="table-wrap">
+          <table class="entry" id="curve-table">
+            <thead id="curve-head"></thead>
+            <tbody id="curve-body"></tbody>
+          </table>
+        </div>
+        <div class="manual-only"><button type="button" class="btn small" id="reseed">Copy from the Adjust selection</button></div>
+      </section>
+      <section>
+        <h2>Targets</h2>
+        <div class="pair">
+          <label class="field" for="target"><span class="lbl">Break-even ROAS</span><span class="num"><input id="target" type="text" inputmode="decimal" autocomplete="off"><span class="unit">%</span></span></label>
+          <label class="field manual-only" for="cpi"><span class="lbl">CPI (optional)</span><span class="num"><span class="unit pre">$</span><input id="cpi" type="text" inputmode="decimal" autocomplete="off" placeholder="—"></span></label>
+          <div class="field adjust-only"><span class="lbl">CPI</span><span class="static" id="cpi-static">—</span></div>
+        </div>
+      </section>
+      <section>
+        <fieldset>
+          <legend id="drift-legend">Revenue per active player after your data</legend>
+          <p class="hint" id="drift-hint"></p>
+          <label class="opt" for="drift-trend30"><input type="radio" name="drift" id="drift-trend30" value="trend30"><span><span id="lbl-trend30"></span><span class="d" id="d-trend30"></span></span></label>
+          <label class="opt" for="drift-flat"><input type="radio" name="drift" id="drift-flat" value="flat"><span><span id="lbl-flat">Hold at the latest level</span><span class="d" id="d-flat"></span></span></label>
+          <label class="opt" for="drift-trend"><input type="radio" name="drift" id="drift-trend" value="trend"><span><span id="lbl-trend"></span><span class="d" id="d-trend"></span></span></label>
+          <div class="opt"><input type="radio" name="drift" id="drift-custom" value="custom" aria-label="Custom change per doubling of player age"><span><label for="drift-custom">Custom</label><span class="num inline"><input id="drift-custom-val" type="text" inputmode="decimal" autocomplete="off" aria-label="Custom change per doubling of player age, percent"><span class="unit">%</span></span><span class="d">change per doubling of player age</span></span></div>
+        </fieldset>
+        <details>
+          <summary>Range settings</summary>
+          <div class="pair">
+            <label class="field" for="tail-spread"><span class="lbl">Tail exponent ±</span><span class="num"><input id="tail-spread" type="text" inputmode="decimal" autocomplete="off"></span></label>
+            <label class="field" for="drift-spread"><span class="lbl">ARPDAU trend ±</span><span class="num"><input id="drift-spread" type="text" inputmode="decimal" autocomplete="off"><span class="unit">%</span></span></label>
+          </div>
+          <p class="hint">The shaded range crosses a steeper and a flatter retention tail with every revenue path in play: holding flat, the measured trend, and this much per doubling of age either side of your choice.</p>
+        </details>
+      </section>
+    </aside>
+
+    <main class="results">
+      <section class="card empty" id="empty" hidden>
+        <h2 id="empty-title">Not enough data for a forecast</h2>
+        <p class="sub" id="empty-text"></p>
+      </section>
+      <div id="filled">
+        <div class="kpis" id="kpis"></div>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Cumulative ROAS</h2>
+              <p class="sub" id="roas-sub">Dots are measured, the line is the forecast, and the shading is the range.</p>
+            </div>
+            <div class="seg" role="group" aria-label="Chart horizon" id="horizon">
+              <button type="button" data-h="90" aria-pressed="false">90 days</button>
+              <button type="button" data-h="180" aria-pressed="false">180 days</button>
+              <button type="button" data-h="365" aria-pressed="true">1 year</button>
+              <button type="button" data-h="730" aria-pressed="false">2 years</button>
+            </div>
+          </div>
+          <div class="plot" id="plot-roas" tabindex="0" role="group" aria-label="Cumulative ROAS chart. Use the arrow keys to read values by day."><div class="tip" role="status" hidden></div></div>
+        </section>
+        <div class="two-up">
+          <section class="card">
+            <div><h2>Players active each day</h2><p class="sub" id="ret-sub"></p></div>
+            <div class="plot" id="plot-ret" tabindex="0" role="group" aria-label="Retention chart. Use the arrow keys to read values by day."><div class="tip" role="status" hidden></div></div>
+          </section>
+          <section class="card">
+            <div><h2>Revenue per active player</h2><p class="sub" id="arp-sub"></p></div>
+            <div class="plot" id="plot-arp" tabindex="0" role="group" aria-label="Revenue per active player chart. Use the arrow keys to read values by day."><div class="tip" role="status" hidden></div></div>
+          </section>
+        </div>
+        <section class="card">
+          <div><h2>Forecast by day</h2><p class="sub">Shaded rows fall inside your data. Days played counts install day, so it starts at 1.</p></div>
+          <div class="table-wrap"><table id="forecast-table"></table></div>
+        </section>
+        <section class="card">
+          <div><h2>ROAS goals for payback</h2><p class="sub" id="goals-sub"></p></div>
+          <div class="table-wrap"><table id="goals-table"></table></div>
+        </section>
+        <section class="card">
+          <h2>Checks</h2>
+          <ul class="notes" id="checks"></ul>
+        </section>
+      </div>
+
+      <section class="card method" aria-labelledby="method-h">
+        <h2 id="method-h">How the forecast works</h2>
+        <p class="sub">ROAS on day N is the revenue an install has brought in by day N, divided by what it cost. Revenue only arrives on days the player shows up, so the forecast splits it into how many days players show up and what each of those days earns.</p>
+        <ol>
+          <li><strong>Days played come from retention.</strong> Day-N retention is the share of installs that play on day N. Added up day by day, it gives the days an install has played so far. Between your measured days the curve is interpolated on log scales. Past the last one it continues as a power law, R(d) = R(L) × (d / L)<sup>−b</sup>, with b fitted on the last two doublings of age.</li>
+          <li><strong>What a day earns comes from ROAS.</strong> Each step between two ROAS readings, divided by the days played inside it, is the revenue per active player per day as a share of CPI. Install day gets its own window when D0 ROAS is known, because first sessions earn differently.</li>
+          <li><strong>Carry both forward.</strong> Every day past your last ROAS reading adds R(d) × u(d), where u starts at the newest window and follows the path you pick on the left. With a single ROAS reading and a flat path this is the classic ratio ROAS(N) = ROAS(n) × LT(N) ÷ LT(n). CPI cancels out, so you don't need it.</li>
+          <li><strong>The range</strong> crosses a steeper and a flatter retention tail (exponent ± 0.10) with every revenue path in play. It widens the further the forecast runs past your data, and it narrows as older cohorts add D30 and D60.</li>
+        </ol>
+        <pre class="formula">LT(N)   = R(0) + R(1) + … + R(N)          R(0) = 1, install day
+u       = (ROAS(n₂) − ROAS(n₁)) ÷ (LT(n₂) − LT(n₁))     per window
+ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
+        <h3>How an Adjust export is read</h3>
+        <ul>
+          <li>Each row is one install day of one campaign. A cohort counts toward day N only when its install date plus N is at least two days before the export date, because the latest day is still filling in.</li>
+          <li>Each later day is chained from the one before it using only cohorts that have finished both days, so a weak early week cannot bend the curve. Retention is weighted by installs, ROAS by spend.</li>
+          <li>A day needs at least 3 finished cohorts carrying 10% of the selection's installs (spend, for ROAS); thinner days are left out and listed under Checks.</li>
+          <li>Day 0 is install day, and Dn ROAS counts revenue from day 0 through day n. Adjust's ROAS includes ad and purchase revenue as the SDK reports it.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<script type="text/csv" id="bundled-export" data-name="@BUNDLED_NAME@">@BUNDLED_CSV@</script>
+<script>
+/*@LIBRARY@*/
+</script>
+<script>
+(function () {
+  'use strict';
+  var F = window.RoasForecast;
+  var NS = 'http://www.w3.org/2000/svg';
+  var ROWS = [7, 14, 30, 60, 90, 180, 365, 730];
+  var CHECKPOINTS = [0, 3, 7, 14, 30];
+  var GOALS = [90, 180, 365, 730];
+  var ROAS_TICKS = { 90: [0, 7, 14, 30, 60, 90], 180: [0, 30, 60, 90, 120, 150, 180], 365: [0, 30, 60, 90, 180, 270, 365], 730: [0, 90, 180, 365, 540, 730] };
+  var LOG_TICKS = [1, 3, 7, 14, 30, 90, 180, 365, 730];
+  var ARP_TICKS = [0, 1, 3, 7, 14, 30, 90, 180, 365, 730];
+  var DIM_LABELS = { app: 'App', os_name: 'OS', channel: 'Channel', network: 'Network', partner_name: 'Partner', campaign_network: 'Campaign', campaign: 'Campaign', adgroup_network: 'Ad group', adgroup: 'Ad group', creative_network: 'Creative', creative: 'Creative', country: 'Country', country_code: 'Country', store_type: 'Store' };
+  // Shown when there is no export to start from: [day, retention %, ROAS %].
+  var EXAMPLE = [[0, '', '10'], [1, '40', '14'], [3, '27', '19'], [7, '18', '26'], [14, '13', '33']];
+  var KEY = 'cohort-roas-forecast/v1';
+
+  var state = { mode: 'adjust', dims: {}, dimsSet: false, from: '', to: '', horizon: 365, driftMode: 'auto', driftCustom: '-10',
+                tailSpread: '0.10', driftSpread: '5', target: '100', cpi: '', rows: null, example: false };
+  var upload = null, data = null, view = null;
+
+  function $(id) { return document.getElementById(id); }
+  function h(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v == null || v === false) return;
+      if (k === 'class') e.className = v;
+      else if (k === 'text') e.textContent = v;
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? '' : v);
+    });
+    (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  function svgEl(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function svgText(parent, x, y, str, cls, anchor) {
+    var t = svgEl('text', { x: x, y: y, class: cls || 'tick', 'text-anchor': anchor || 'middle' }, parent);
+    t.textContent = str;
+    return t;
+  }
+  function num(s, fb) {
+    if (s == null) return fb;
+    var v = parseFloat(String(s).replace(',', '.').replace(/[%$\s−]/g, function (c) { return c === '−' ? '-' : ''; }));
+    return isFinite(v) ? v : fb;
+  }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  // ---------- formatting
+  function pct(v) {
+    if (v == null || !isFinite(v)) return '—';
+    var x = v * 100;
+    return (Math.abs(x) >= 99.95 ? x.toFixed(0) : x.toFixed(1)) + '%';
+  }
+  function pctRange(a, b) { return pct(a).replace('%', '') + '–' + pct(b); }
+  function signedPct(v) { var x = v * 100; return (x > 0.05 ? '+' : x < -0.05 ? '−' : '') + Math.abs(x).toFixed(1) + '%'; }
+  function money(v) {
+    if (v == null || !isFinite(v)) return '—';
+    var a = Math.abs(v);
+    if (a >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e4) return '$' + (v / 1e3).toFixed(1) + 'k';
+    if (a >= 100) return '$' + Math.round(v).toLocaleString('en-US');
+    if (a >= 0.1 || a === 0) return '$' + v.toFixed(2);
+    return '$' + v.toFixed(3);
+  }
+  function intFmt(n) { return Math.round(n).toLocaleString('en-US'); }
+  function dayLbl(d) { return d == null ? 'after D730' : 'D' + d; }
+  function dateLbl(iso) {
+    if (!iso) return '';
+    return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
+  function months(d) { return d < 60 ? Math.max(1, Math.round(d / 7)) + ' weeks' : Math.round(d / 30.44) + ' months'; }
+  function fmtU(u, cpi) { return cpi ? money(u * cpi) : pct(u) + ' of CPI'; }
+  function windowLbl(w) { return 'D' + w.start + (w.end > w.start ? '–D' + w.end : ''); }
+
+  // ---------- storage (per-viewer convenience only)
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ } }
+  function saveUpload() {
+    try {
+      if (upload) localStorage.setItem(KEY + ':upload', JSON.stringify(upload));
+      else localStorage.removeItem(KEY + ':upload');
+    } catch (e) { /* too large or unavailable: the upload lasts for this visit */ }
+  }
+  function restore() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (s && typeof s === 'object') Object.keys(state).forEach(function (k) { if (k in s) state[k] = s[k]; });
+    } catch (e) { /* ignore */ }
+    try {
+      var u = JSON.parse(localStorage.getItem(KEY + ':upload') || 'null');
+      if (u && typeof u.text === 'string') upload = u;
+    } catch (e) { /* ignore */ }
+    if ([90, 180, 365, 730].indexOf(state.horizon) < 0) state.horizon = 365;
+    if (!state.dims || typeof state.dims !== 'object') state.dims = {};
+    if (!Array.isArray(state.rows)) state.rows = null;
+    if (['auto', 'flat', 'trend30', 'trend', 'custom'].indexOf(state.driftMode) < 0) state.driftMode = 'auto';
+    if (state.mode !== 'manual') state.mode = 'adjust';
+    state.example = state.example === true;
+  }
+
+  // ---------- data
+  function bundled() {
+    var el = $('bundled-export'), text = el.textContent.trim();
+    return text ? { name: el.getAttribute('data-name') || 'export.csv', text: text } : null;
+  }
+  function loadData() {
+    var src = upload || bundled();
+    var d = src ? F.loadAdjustExport(src.text, src.name) : null;
+    if (d && !d.ok && upload) {
+      upload = null; saveUpload();
+      src = bundled();
+      d = src ? F.loadAdjustExport(src.text, src.name) : null;
+    }
+    data = d && d.ok ? d : null;
+    syncSourceButtons();
+  }
+  function syncSourceButtons() {
+    var adj = $('src-adjust');
+    adj.disabled = !data;
+    if (data) adj.removeAttribute('title'); else adj.title = 'Load an Adjust export first';
+    $('use-bundled').hidden = !(upload && bundled());
+    $('reseed').textContent = data ? 'Copy from the Adjust selection' : 'Reset to the example';
+  }
+  function visibleDims() {
+    return data.schema.dims.filter(function (k) { return F.dimensionValues(data, k, { dims: {} }).length > 1; });
+  }
+  function others(k) { var o = {}; Object.keys(state.dims).forEach(function (j) { if (j !== k) o[j] = state.dims[j]; }); return o; }
+  function dateFilter() { return { from: state.from ? F.toDay(state.from) : null, to: state.to ? F.toDay(state.to) : null }; }
+  function filter() { var f = dateFilter(); f.dims = state.dims; return f; }
+  function applyDefaultDims() {
+    state.dims = {};
+    visibleDims().forEach(function (k) {
+      var v = F.dimensionValues(data, k, { dims: state.dims });
+      if (v.length && v[0].cost > 0) state.dims[k] = v[0].value;
+    });
+    state.dimsSet = true;
+  }
+
+  function renderFilters() {
+    var wrap = $('dim-fields');
+    wrap.textContent = '';
+    var dims = visibleDims();
+    Object.keys(state.dims).forEach(function (k) { if (dims.indexOf(k) < 0) delete state.dims[k]; });
+    dims.forEach(function (k) {
+      var f = dateFilter(); f.dims = others(k);
+      var vals = F.dimensionValues(data, k, f);
+      if (state.dims[k] && !vals.some(function (v) { return v.value === state.dims[k]; })) delete state.dims[k];
+      var sel = h('select', { id: 'dim-' + k });
+      sel.appendChild(h('option', { value: '', text: 'All' }));
+      vals.forEach(function (v) {
+        sel.appendChild(h('option', { value: v.value, text: v.value + '  ·  ' + (v.cost > 0 ? money(v.cost) : 'no spend') }));
+      });
+      sel.value = state.dims[k] || '';
+      sel.addEventListener('change', function () {
+        if (sel.value) state.dims[k] = sel.value; else delete state.dims[k];
+        renderFilters(); update();
+      });
+      var wide = /campaign|adgroup|creative/.test(k);
+      wrap.appendChild(h('label', { class: 'field dim' + (wide ? ' wide' : ''), for: 'dim-' + k }, [h('span', { class: 'lbl', text: DIM_LABELS[k] || k }), sel]));
+    });
+    var lo = F.fromDay(data.minDate), hi = F.fromDay(data.maxDate);
+    ['from', 'to'].forEach(function (k) {
+      var inp = $('date-' + k);
+      inp.min = lo; inp.max = hi;
+      if (state[k] && (state[k] < lo || state[k] > hi)) state[k] = '';
+      inp.value = state[k] || (k === 'from' ? lo : hi);
+    });
+  }
+
+  function renderSummary(agg) {
+    var s = agg.summary, el = $('summary');
+    if (!s.rows) { el.textContent = 'No cohorts match these filters.'; return; }
+    var parts = [dateLbl(s.first) + ' – ' + dateLbl(s.last), s.cohortDays + ' install days', intFmt(s.installs) + ' installs'];
+    if (s.cost > 0) parts.push(money(s.cost) + ' spend', 'CPI ' + money(s.cpi));
+    parts.push('cohort days count through ' + dateLbl(F.fromDay(data.completeThrough)));
+    el.textContent = parts.join('  ·  ');
+  }
+
+  function renderEyebrow() {
+    var e = $('eyebrow');
+    if (state.mode === 'manual' || !data) { e.textContent = 'Manual entry'; return; }
+    var parts = [];
+    if (data.schema.dims.indexOf('app') >= 0) {
+      var apps = F.dimensionValues(data, 'app', { dims: {} });
+      if (apps.length === 1) parts.push(apps[0].value);
+    }
+    parts.push('Adjust export, ' + dateLbl(data.exportDate));
+    e.textContent = parts.join('  ·  ');
+  }
+
+  function renderFoot() {
+    var src = upload || bundled();
+    if (!data || !src) {
+      $('foot').textContent = 'No export loaded. Load an Adjust report export above, or type a cohort in by hand. Inputs are remembered in this browser.';
+      return;
+    }
+    $('foot').textContent = 'Data: ' + src.name + ' (' + data.cohorts.length + ' rows, ' +
+      (upload ? 'loaded in this browser only' : 'bundled with this page') + '). Cohort-day cells after ' +
+      dateLbl(F.fromDay(data.completeThrough)) + ' are ignored because they are still filling in. Inputs are remembered in this browser.';
+  }
+
+  // ---------- cohort curve table
+  function renderAdjustTable(agg) {
+    var head = $('curve-head'), body = $('curve-body');
+    head.textContent = ''; body.textContent = '';
+    head.appendChild(h('tr', null, [h('th', { scope: 'col', text: 'Day' }), h('th', { scope: 'col', text: 'Retention' }),
+      h('th', { scope: 'col', text: 'ROAS' }), h('th', { scope: 'col', text: 'Cohorts', title: 'Install days old enough to have finished this day' })]));
+    var days = {};
+    function at(d) { return days[d] || (days[d] = { n: 0 }); }
+    agg.retention.forEach(function (p) { var x = at(p.day); x.ret = p.value; x.n = Math.max(x.n, p.cohorts); });
+    agg.roas.forEach(function (p) { var x = at(p.day); x.roas = p.value; x.n = Math.max(x.n, p.cohorts); });
+    at(0);
+    Object.keys(days).map(Number).sort(function (a, b) { return a - b; }).forEach(function (d) {
+      var x = days[d];
+      body.appendChild(h('tr', null, [
+        h('th', { scope: 'row', text: 'D' + d }),
+        h('td', { class: d === 0 ? 'dim' : null, text: d === 0 ? '100%' : x.ret != null ? pct(x.ret) : '—' }),
+        h('td', { text: x.roas != null ? pct(x.roas) : '—' }),
+        h('td', { class: 'dim', text: x.n ? String(x.n) : '—' })
+      ]));
+    });
+    $('curve-sub').textContent = 'Weighted across the selected install days. Each day uses only the cohorts that have finished it.';
+  }
+
+  function seedRows() {
+    var agg = data ? F.aggregateCohorts(data, filter()) : null, map = {};
+    function row(d) { return map[d] || (map[d] = { day: String(d), ret: '', roas: '' }); }
+    function trim(v) { return String(Math.round(v * 100) / 100); }
+    row(0);
+    if (agg && agg.retention.length + agg.roas.length > 0) {
+      agg.retention.forEach(function (p) { row(p.day).ret = trim(p.value * 100); });
+      agg.roas.forEach(function (p) { row(p.day).roas = trim(p.value * 100); });
+      state.example = false;
+    } else {
+      EXAMPLE.forEach(function (e) { var r = row(e[0]); r.ret = e[1]; r.roas = e[2]; });
+      state.example = true;
+    }
+    state.rows = Object.keys(map).map(Number).sort(function (a, b) { return a - b; }).map(function (d) { return map[d]; });
+  }
+
+  function manualSub() {
+    $('curve-sub').textContent = state.example
+      ? 'Example numbers. Replace them with your cohort\'s: retention is the share of installs that play on that day, ROAS is cumulative revenue by that day ÷ spend.'
+      : 'Retention: share of installs that play on that day. ROAS: cumulative revenue by that day ÷ spend. Leave cells blank when you don\'t have them.';
+  }
+
+  function edited() { if (state.example) { state.example = false; manualSub(); } }
+
+  function numInput(id, value, unit, label, onInput, pre) {
+    var inp = h('input', { id: id, type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': label });
+    inp.value = value || '';
+    inp.addEventListener('input', function () { onInput(inp.value); edited(); validateRows(); update(); });
+    return h('span', { class: 'num', id: id + '-wrap' }, [pre ? h('span', { class: 'unit pre', text: pre }) : null, inp,
+      unit ? h('span', { class: 'unit', text: unit }) : null]);
+  }
+
+  function renderManualTable() {
+    var head = $('curve-head'), body = $('curve-body');
+    head.textContent = ''; body.textContent = '';
+    head.appendChild(h('tr', null, [h('th', { scope: 'col', text: 'Day' }), h('th', { scope: 'col', text: 'Retention' }),
+      h('th', { scope: 'col', text: 'ROAS' }), h('th', { scope: 'col' }, [h('span', { class: 'visually-hidden', text: 'Remove' })])]));
+    state.rows.forEach(function (row, i) {
+      var cells = [];
+      if (i === 0) cells.push(h('th', { scope: 'row', text: 'D0' }));
+      else cells.push(h('td', null, [numInput('mday-' + i, row.day, '', 'Day number', function (v) { row.day = v; }, 'D')]));
+      cells.push(h('td', null, [i === 0 ? h('span', { class: 'dim', text: '100%' })
+        : numInput('mret-' + i, row.ret, '%', 'Retention, percent', function (v) { row.ret = v; })]));
+      cells.push(h('td', null, [numInput('mroas-' + i, row.roas, '%', 'ROAS, percent', function (v) { row.roas = v; })]));
+      cells.push(h('td', null, [i === 0 ? null : h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Remove this day', text: '×',
+        onclick: function () { state.rows.splice(i, 1); edited(); renderManualTable(); update(); } })]));
+      body.appendChild(h('tr', null, cells));
+    });
+    manualSub();
+    validateRows();
+  }
+
+  function validateRows() {
+    if (state.mode !== 'manual' || !state.rows) return;
+    var seen = {};
+    state.rows.forEach(function (row, i) {
+      var mark = function (id, bad) {
+        var w = $(id + '-wrap');
+        if (!w) return;
+        w.classList.toggle('invalid', !!bad);
+        var inp = w.querySelector('input');
+        if (inp) inp.setAttribute('aria-invalid', bad ? 'true' : 'false');
+      };
+      if (i > 0) {
+        var d = num(row.day, NaN);
+        mark('mday-' + i, row.day !== '' && (!isFinite(d) || d < 1 || d > 365 || Math.round(d) !== d || seen[d]));
+        if (isFinite(d)) seen[d] = true;
+        var r = num(row.ret, NaN);
+        mark('mret-' + i, row.ret !== '' && (!isFinite(r) || r <= 0 || r > 100));
+      }
+      var s = num(row.roas, NaN);
+      mark('mroas-' + i, row.roas !== '' && (!isFinite(s) || s < 0));
+    });
+  }
+
+  function manualInput() {
+    var ret = [], roas = [];
+    state.rows.forEach(function (row, i) {
+      var d = i === 0 ? 0 : num(row.day, NaN);
+      if (!isFinite(d)) return;
+      var r = num(row.ret, NaN), s = num(row.roas, NaN);
+      if (i > 0 && isFinite(r)) ret.push({ day: d, value: r / 100 });
+      if (isFinite(s)) roas.push({ day: d, value: s / 100 });
+    });
+    return { retention: ret, roas: roas };
+  }
+
+  // ---------- main update
+  function update() {
+    save();
+    var input, meta;
+    if (state.mode === 'adjust' && data) {
+      var agg = F.aggregateCohorts(data, filter());
+      input = { retention: agg.retention, roas: agg.roas };
+      meta = { agg: agg, cpi: agg.summary.cpi };
+      renderAdjustTable(agg);
+      renderSummary(agg);
+      $('cpi-static').textContent = agg.summary.cpi ? money(agg.summary.cpi) + ' (spend ÷ paid installs)' : 'no spend selected';
+    } else {
+      input = manualInput();
+      var c = num(state.cpi, NaN);
+      meta = { cpi: c > 0 ? c : null };
+    }
+    var r = F.forecast(input, {
+      target: clamp(num(state.target, 100), 1, 1000) / 100,
+      driftMode: state.driftMode,
+      driftCustom: clamp(num(state.driftCustom, 0), -90, 200) / 100,
+      tailSpread: clamp(num(state.tailSpread, 0.1), 0, 0.5),
+      driftSpread: clamp(num(state.driftSpread, 5), 0, 50) / 100
+    });
+    view = { r: r, meta: meta };
+    renderEyebrow();
+    renderDrift(r, meta);
+    if (!r.ok) { showEmpty(r, meta); return; }
+    $('empty').hidden = true;
+    $('filled').hidden = false;
+    renderKpis(r);
+    renderCharts();
+    renderForecastTable(r, meta);
+    renderGoals(r, meta);
+    renderChecks(r, meta);
+  }
+
+  function showEmpty(r, meta) {
+    $('filled').hidden = true;
+    $('empty').hidden = false;
+    var msg;
+    if (meta.agg) {
+      var a = meta.agg, s = a.summary, bits = [];
+      if (!s.rows) msg = 'No cohorts match these filters. Pick another campaign or widen the install dates.';
+      else {
+        if (r.needRetention) bits.push(a.retention.length === 1 ? 'only D1 retention has enough finished cohorts' : 'retention has no day with enough finished cohorts');
+        if (r.needRoas) bits.push(s.cost > 0 ? 'no ROAS day has enough finished cohorts' : 'this selection has no spend, so ROAS is undefined');
+        var sk = a.skipped.retention || a.skipped.roas;
+        msg = 'The forecast needs retention for at least two days and ROAS for at least one. In this selection ' + bits.join(', and ') + '.' +
+          (sk ? ' D' + sk.day + ' has ' + sk.cohorts + ' finished cohort' + (sk.cohorts === 1 ? '' : 's') + ' (' + Math.round(sk.share * 100) + '% of the sample); it needs 3 and 10%.' : '') +
+          ' Widen the install dates, pick a campaign with older cohorts, or switch to manual entry.';
+      }
+    } else {
+      msg = 'Enter retention for at least two days (D1 and D7, for example) and ROAS for at least one day.';
+    }
+    $('empty-text').textContent = msg;
+  }
+
+  // ---------- assumptions panel
+  function renderDrift(r, meta) {
+    var ok = r.ok, d = ok ? r.drift : null;
+    $('drift-legend').textContent = ok ? 'Revenue per active player after D' + r.lastRoasDay : 'Revenue per active player after your data';
+    $('drift-hint').textContent = !ok ? '' : d
+      ? 'Measured from D' + d.from + ' to D' + d.to + ': ' + signedPct(d.perDoubling) + ' per doubling of player age.'
+      : 'Add ROAS for two or more days after install day, such as D3 and D7, to measure a trend.';
+    var verb = d && d.perDoubling < 0 ? 'falling' : 'rising';
+    $('lbl-trend30').textContent = d ? 'Keep ' + verb + ' until D30, then hold' : 'Follow the measured trend until D30';
+    $('d-trend30').textContent = d ? signedPct(d.perDoubling) + ' per doubling of age' : 'Needs a measured trend';
+    var lw = ok ? r.base.windows[r.base.windows.length - 1] : null;
+    $('d-flat').textContent = lw ? fmtU(lw.u, meta.cpi) + ' per active player per day, as in ' + windowLbl(lw) : '';
+    $('lbl-trend').textContent = d ? 'Keep ' + verb + ' for the whole horizon' : 'Follow the measured trend throughout';
+    $('d-trend').textContent = d ? (d.perDoubling < 0 ? 'The decline compounds with no floor' : 'The growth compounds with no cap') : 'Needs a measured trend';
+    ['trend30', 'trend'].forEach(function (k) {
+      var i = $('drift-' + k);
+      i.disabled = !d;
+      i.closest('.opt').classList.toggle('disabled', !d);
+    });
+    var mode = ok ? r.mode : (state.driftMode === 'auto' ? 'flat' : state.driftMode);
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="drift"]'), function (i) { i.checked = i.value === mode; });
+  }
+
+  // ---------- KPI tiles
+  function renderKpis(r) {
+    var el = $('kpis'), b = r.base, band = r.band;
+    el.textContent = '';
+    function tile(k, v, sub, lead) {
+      el.appendChild(h('div', { class: 'tile' + (lead ? ' lead' : '') }, [h('div', { class: 'k', text: k }), h('div', { class: 'v', text: v }), h('div', { class: 'r', text: sub })]));
+    }
+    var pb = b.payback, range;
+    if (band.paybackHigh == null) range = 'not within 2 years in any case';
+    else range = 'range ' + dayLbl(band.paybackHigh) + ' to ' + dayLbl(band.paybackLow);
+    tile('Payback at ' + pct(r.options.target) + ' ROAS', pb != null ? 'D' + pb : 'Not by D730', (pb != null ? '≈ ' + months(pb) + ', ' : '') + range, true);
+    [90, 180, 365].forEach(function (d) {
+      tile('D' + d + ' ROAS', pct(b.roas[d]), 'range ' + pctRange(band.roasLow[d], band.roasHigh[d]));
+    });
+  }
+
+  // ---------- charts
+  function lin(d0, d1, r0, r1) {
+    var k = (r1 - r0) / ((d1 - d0) || 1);
+    var f = function (v) { return r0 + (v - d0) * k; };
+    f.invert = function (p) { return d0 + (p - r0) / k; };
+    return f;
+  }
+  function logScale(d0, d1, r0, r1) {
+    var a = Math.log(d0), b = Math.log(d1), k = (r1 - r0) / ((b - a) || 1);
+    var f = function (v) { return r0 + (Math.log(v) - a) * k; };
+    f.invert = function (p) { return Math.exp(a + (p - r0) / k); };
+    return f;
+  }
+  function niceTicks(max, count) {
+    if (!(max > 0)) max = 1;
+    var raw = max / count, mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), step = 10 * mag;
+    [1, 2, 2.5, 5, 10].some(function (s) { if (s * mag >= raw - 1e-12) { step = s * mag; return true; } return false; });
+    var n = Math.ceil(max / step - 1e-9), out = [];
+    for (var i = 0; i <= n; i++) out.push(i * step);
+    return out;
+  }
+  function newSvg(plot, W, H) {
+    var old = plot.querySelector('svg'), tip = plot.querySelector('.tip');
+    if (old) old.remove();
+    if (tip && document.activeElement !== plot) tip.hidden = true;
+    var svg = svgEl('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H, 'aria-hidden': 'true' });
+    plot.insertBefore(svg, plot.firstChild);
+    return svg;
+  }
+  function xTicks(svg, ticks, xf, base, label) {
+    var placed = [];
+    ticks.forEach(function (t, i) {
+      var s = label(t), w = s.length * 6.6 + 10, px = xf(t), prev = placed[placed.length - 1];
+      if (prev && px - w / 2 < prev.px + prev.w / 2) {
+        if (i === ticks.length - 1) placed.pop(); else return;
+      }
+      placed.push({ px: px, w: w, s: s });
+    });
+    placed.forEach(function (p) {
+      svgEl('line', { x1: p.px, x2: p.px, y1: base, y2: base + 4, class: 'tick-mark' }, svg);
+      svgText(svg, p.px, base + 17, p.s);
+    });
+  }
+  function pathFrom(points) {
+    return points.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join('');
+  }
+  function bandPolygon(svg, from, to, xf, yHi, yLo) {
+    if (to <= from) return;
+    var pts = [], d;
+    for (d = from; d <= to; d++) pts.push(xf(d).toFixed(1) + ',' + yHi(d).toFixed(1));
+    for (d = to; d >= from; d--) pts.push(xf(d).toFixed(1) + ',' + yLo(d).toFixed(1));
+    svgEl('polygon', { points: pts.join(' '), class: 'band' }, svg);
+  }
+  function fillTip(tip, c) {
+    tip.textContent = '';
+    tip.appendChild(h('div', { class: 't-day', text: c.head }));
+    c.items.forEach(function (it) {
+      tip.appendChild(h('div', { class: 't-row' }, [it.key ? h('span', { class: 'key' + (it.key === 'band' ? ' band-key' : '') }) : null,
+        h('span', { class: 't-val', text: it.v }), h('span', { class: 't-lbl', text: it.l })]));
+    });
+  }
+  function attachHover(plot, svg, cfg) {
+    var cross = svgEl('line', { class: 'cross', y1: cfg.top, y2: cfg.bottom, visibility: 'hidden' }, svg);
+    var dot = svgEl('circle', { class: 'hover-dot', r: 5, visibility: 'hidden' }, svg);
+    var hit = svgEl('rect', { class: 'hit', x: cfg.left, y: cfg.top, width: Math.max(0, cfg.right - cfg.left), height: Math.max(0, cfg.bottom - cfg.top) }, svg);
+    var tip = plot.querySelector('.tip'), cur = null;
+    function show(day) {
+      day = clamp(day, cfg.min, cfg.max);
+      cur = day;
+      var px = cfg.xOf(day), py = cfg.yOf(day);
+      cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('visibility', 'visible');
+      if (py != null && isFinite(py)) { dot.setAttribute('cx', px); dot.setAttribute('cy', py); dot.setAttribute('visibility', 'visible'); }
+      else dot.setAttribute('visibility', 'hidden');
+      fillTip(tip, cfg.content(day));
+      tip.hidden = false;
+      var tw = tip.offsetWidth, W = plot.clientWidth, left = px + 14;
+      if (left + tw > W) left = px - 14 - tw;
+      if (left < 0) left = clamp(px - tw / 2, 0, Math.max(0, W - tw));
+      tip.style.left = left + 'px';
+      tip.style.top = (cfg.top + 2) + 'px';
+    }
+    function hide() { cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tip.hidden = true; }
+    function fromEvent(e) { var rect = svg.getBoundingClientRect(); show(cfg.dayAt(e.clientX - rect.left)); }
+    hit.addEventListener('pointermove', fromEvent);
+    hit.addEventListener('pointerdown', fromEvent);
+    hit.addEventListener('pointerleave', function () { if (document.activeElement !== plot) hide(); });
+    plot.onfocus = function () { show(cur != null ? cur : cfg.start); };
+    plot.onblur = hide;
+    plot.onkeydown = function (e) {
+      var d = cur != null ? cur : cfg.start, step = e.shiftKey ? 5 : 1;
+      if (e.key === 'ArrowRight') d = cfg.next(d, step);
+      else if (e.key === 'ArrowLeft') d = cfg.next(d, -step);
+      else if (e.key === 'Home') d = cfg.min;
+      else if (e.key === 'End') d = cfg.max;
+      else if (e.key === 'Escape') { hide(); return; }
+      else return;
+      e.preventDefault();
+      show(d);
+    };
+    if (document.activeElement === plot) show(cfg.start);
+  }
+  function logNext(d, s, min, max) {
+    var n = s > 0 ? Math.max(d + 1, Math.round(d * Math.pow(1.08, s))) : Math.min(d - 1, Math.round(d / Math.pow(1.08, -s)));
+    return clamp(n, min, max);
+  }
+  function status(day, points, lastDay) {
+    if (points.some(function (p) { return p.day === day; })) return 'measured';
+    return day <= lastDay ? 'between measured days' : 'forecast';
+  }
+
+  function drawRoas() {
+    var r = view.r, meta = view.meta, plot = $('plot-roas');
+    var W = Math.max(260, Math.floor(plot.clientWidth)), Hh = W < 560 ? 250 : 300;
+    var m = { l: 46, r: 18, t: 16, b: 30 }, H = state.horizon, target = r.options.target;
+    var base = r.base.roas, lo = r.band.roasLow, hi = r.band.roasHigh, last = r.lastRoasDay, d;
+    var maxV = target;
+    for (d = 0; d <= H; d++) maxV = Math.max(maxV, hi[d], base[d]);
+    var yt = niceTicks(maxV * 1.04, Hh < 280 ? 4 : 5), yMax = yt[yt.length - 1];
+    var x = lin(0, H, m.l, W - m.r), y = lin(0, yMax, Hh - m.b, m.t);
+    var svg = newSvg(plot, W, Hh);
+    var g = svgEl('g', { class: 'grid' }, svg);
+    yt.forEach(function (v) {
+      svgEl('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }, g);
+      svgText(svg, m.l - 8, y(v) + 4, Math.round(v * 100) + '%', 'tick', 'end');
+    });
+    svgEl('line', { x1: m.l, x2: W - m.r, y1: y(0), y2: y(0), class: 'axis-base' }, svg);
+    xTicks(svg, ROAS_TICKS[H], x, Hh - m.b, function (t) { return 'D' + t; });
+    bandPolygon(svg, Math.min(last, H), H, x, function (d) { return y(hi[d]); }, function (d) { return y(lo[d]); });
+    svgEl('line', { x1: m.l, x2: W - m.r, y1: y(target), y2: y(target), class: 'target' }, svg);
+    var pts = [];
+    for (d = 0; d <= H; d++) pts.push([x(d), y(base[d])]);
+    svgEl('path', { d: pathFrom(pts), class: 'series' }, svg);
+    var pb = r.base.payback;
+    var labelY = y(target) - 7;
+    if (pb != null && pb <= H) {
+      svgEl('circle', { cx: x(pb), cy: y(base[pb]), r: 5, class: 'payback-dot' }, svg);
+      var leftSide = x(pb) > m.l + 150;
+      svgText(svg, x(pb) + (leftSide ? -9 : 9), labelY, 'Payback D' + pb, 'chart-label', leftSide ? 'end' : 'start');
+      if (x(pb) < W - m.r - 190) svgText(svg, W - m.r, labelY, 'Break-even ' + pct(target), 'chart-label', 'end');
+    } else {
+      svgText(svg, W - m.r, labelY, 'Break-even ' + pct(target), 'chart-label', 'end');
+    }
+    r.roas.forEach(function (p) { if (p.day <= H) svgEl('circle', { cx: x(p.day), cy: y(p.value), r: 4.5, class: 'obs' }, svg); });
+    attachHover(plot, svg, {
+      top: m.t, bottom: Hh - m.b, left: m.l, right: W - m.r, min: 0, max: H, start: Math.min(H, pb != null ? pb : 90),
+      dayAt: function (px) { return Math.round(x.invert(px)); },
+      xOf: x, yOf: function (d) { return y(base[d]); },
+      next: function (d, s) { return clamp(d + s * Math.max(1, Math.round(H / 90)), 0, H); },
+      content: function (d) {
+        var items = [{ key: 'line', v: pct(base[d]), l: 'ROAS' }];
+        if (d > last) items.push({ key: 'band', v: pctRange(lo[d], hi[d]), l: 'range' });
+        if (meta.cpi) items.push({ v: money(base[d] * meta.cpi), l: 'revenue per install' });
+        return { head: 'D' + d + ' · ' + status(d, r.roas, last), items: items };
+      }
+    });
+    $('roas-sub').textContent = 'Dots are measured, the line is the forecast, and the shading is the range. Dashed line: break-even at ' + pct(target) + '.';
+  }
+
+  function drawRet() {
+    var r = view.r, plot = $('plot-ret');
+    var W = Math.max(240, Math.floor(plot.clientWidth)), Hh = 230, m = { l: 44, r: 14, t: 12, b: 30 };
+    var H = state.horizon, R = r.base.R, lo = r.band.retLow, hi = r.band.retHigh, L = r.lastRetentionDay, d;
+    var vals = [R[1], lo[H], hi[1]];
+    r.retention.forEach(function (p) { vals.push(p.value); });
+    var vmin = Math.min.apply(null, vals.filter(function (v) { return v > 0; })), vmax = Math.max.apply(null, vals);
+    var cands = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+    var y0 = cands.filter(function (c) { return c <= vmin; }).pop() || 0.0005;
+    var y1 = cands.filter(function (c) { return c >= vmax; })[0] || 1;
+    var x = logScale(1, H, m.l, W - m.r), y = logScale(y0, y1, Hh - m.b, m.t);
+    var svg = newSvg(plot, W, Hh);
+    var g = svgEl('g', { class: 'grid' }, svg);
+    cands.filter(function (c) { return c >= y0 && c <= y1; }).forEach(function (c) {
+      svgEl('line', { x1: m.l, x2: W - m.r, y1: y(c), y2: y(c) }, g);
+      svgText(svg, m.l - 8, y(c) + 4, (c < 0.01 ? (c * 100).toFixed(1) : Math.round(c * 100)) + '%', 'tick', 'end');
+    });
+    svgEl('line', { x1: m.l, x2: W - m.r, y1: Hh - m.b, y2: Hh - m.b, class: 'axis-base' }, svg);
+    xTicks(svg, LOG_TICKS.filter(function (t) { return t <= H; }), x, Hh - m.b, function (t) { return 'D' + t; });
+    bandPolygon(svg, Math.max(1, Math.min(L, H)), H, x, function (d) { return y(hi[d]); }, function (d) { return y(lo[d]); });
+    var pts = [];
+    for (d = 1; d <= H; d++) pts.push([x(d), y(R[d])]);
+    svgEl('path', { d: pathFrom(pts), class: 'series' }, svg);
+    r.retention.forEach(function (p) { if (p.day <= H) svgEl('circle', { cx: x(p.day), cy: y(p.value), r: 4.5, class: 'obs' }, svg); });
+    attachHover(plot, svg, {
+      top: m.t, bottom: Hh - m.b, left: m.l, right: W - m.r, min: 1, max: H, start: Math.min(H, 30),
+      dayAt: function (px) { return Math.round(x.invert(px)); },
+      xOf: x, yOf: function (d) { return y(R[d]); },
+      next: function (d, s) { return logNext(d, s, 1, H); },
+      content: function (d) {
+        var items = [{ key: 'line', v: pct(R[d]), l: 'of installs play that day' }];
+        if (d > L) items.push({ key: 'band', v: pctRange(lo[d], hi[d]), l: 'range' });
+        items.push({ v: r.base.LT[d].toFixed(1), l: 'days played per install so far' });
+        return { head: 'D' + d + ' · ' + status(d, r.retention, L), items: items };
+      }
+    });
+    $('ret-sub').textContent = 'Share of installs that play on each day, both axes on log scales. Past D' + L + ' the curve falls as d^−' +
+      r.tail.b.toFixed(2) + ', fitted on D' + r.tail.from + '–D' + r.tail.to + '.';
+  }
+
+  function drawArp() {
+    var r = view.r, meta = view.meta, plot = $('plot-arp');
+    var W = Math.max(240, Math.floor(plot.clientWidth)), Hh = 230, m = { l: 50, r: 14, t: 12, b: 30 };
+    var H = state.horizon, u = r.base.u, lo = r.band.uLow, hi = r.band.uHigh, last = Math.min(r.lastRoasDay, H), k = meta.cpi || 1, d;
+    var wins = r.base.windows;
+    var maxV = 0;
+    for (d = 0; d <= H; d++) maxV = Math.max(maxV, hi[d] * k, u[d] * k);
+    var yt = niceTicks(maxV * 1.08, 4), yMax = yt[yt.length - 1];
+    var xs = lin(0, Math.log(H + 2), m.l, W - m.r);
+    var X = function (d) { return xs(Math.log(d + 1)); };
+    var y = lin(0, yMax, Hh - m.b, m.t);
+    var tickFmt = meta.cpi ? function (v) { return '$' + (v < 1 ? v.toFixed(2) : v.toFixed(1)); } : function (v) { return Math.round(v * 100) + '%'; };
+    var svg = newSvg(plot, W, Hh);
+    var g = svgEl('g', { class: 'grid' }, svg);
+    yt.forEach(function (v) {
+      svgEl('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }, g);
+      svgText(svg, m.l - 8, y(v) + 4, tickFmt(v), 'tick', 'end');
+    });
+    svgEl('line', { x1: m.l, x2: W - m.r, y1: y(0), y2: y(0), class: 'axis-base' }, svg);
+    xTicks(svg, ARP_TICKS.filter(function (t) { return t <= H; }), X, Hh - m.b, function (t) { return 'D' + t; });
+    var mid = function (d) { return X(d + 0.5); };
+    if (H > last) bandPolygon(svg, last + 1, H, mid, function (d) { return y(hi[d] * k); }, function (d) { return y(lo[d] * k); });
+    var pts = [];
+    for (d = 0; d <= last; d++) { pts.push([X(d), y(u[d] * k)]); pts.push([X(d + 1), y(u[d] * k)]); }
+    for (d = last + 1; d <= H; d++) pts.push([mid(d), y(u[d] * k)]);
+    svgEl('path', { d: pathFrom(pts), class: 'series' }, svg);
+    wins.forEach(function (w) {
+      if (w.start > H) return;
+      svgEl('circle', { cx: (X(w.start) + X(Math.min(w.end, H) + 1)) / 2, cy: y(w.u * k), r: 4.5, class: 'obs' }, svg);
+    });
+    attachHover(plot, svg, {
+      top: m.t, bottom: Hh - m.b, left: m.l, right: W - m.r, min: 0, max: H, start: Math.min(H, 30),
+      dayAt: function (px) { return Math.floor(Math.exp(xs.invert(px)) - 1); },
+      xOf: function (d) { return d <= last ? (X(d) + X(d + 1)) / 2 : mid(d); },
+      yOf: function (d) { return y(u[d] * k); },
+      next: function (d, s) { return logNext(Math.max(d, 1), s, 0, H); },
+      content: function (d) {
+        if (d <= r.lastRoasDay) {
+          var win = wins.filter(function (w) { return d >= w.start && d <= w.end; })[0];
+          return { head: windowLbl(win) + ' · measured average', items: [{ key: 'line', v: fmtU(win.u, meta.cpi), l: 'per active player per day' }] };
+        }
+        return { head: 'D' + d + ' · forecast', items: [{ key: 'line', v: fmtU(u[d], meta.cpi), l: 'per active player per day' },
+          { key: 'band', v: meta.cpi ? money(lo[d] * k) + '–' + money(hi[d] * k) : pctRange(lo[d], hi[d]), l: 'range' }] };
+      }
+    });
+    var path = r.mode === 'trend30' ? signedPct(r.path.p) + ' per doubling of age until D30, then flat'
+      : r.mode === 'trend' ? signedPct(r.path.p) + ' per doubling of age throughout'
+      : r.mode === 'custom' ? signedPct(r.path.p) + ' per doubling of age (custom)' : 'flat at the latest level';
+    $('arp-sub').textContent = (meta.cpi ? 'Dollars' : 'Share of CPI') + ' earned per active player per day, by player age (log scale). Steps are measured windows; after D' +
+      r.lastRoasDay + ' the line follows your choice: ' + path + '.';
+  }
+
+  function renderCharts() {
+    if (!view || !view.r.ok) return;
+    drawRoas(); drawRet(); drawArp();
+  }
+
+  // ---------- tables
+  function renderForecastTable(r, meta) {
+    var t = $('forecast-table'), cpi = meta.cpi, lastV = r.lastRoasValue;
+    t.textContent = '';
+    var cols = ['Day', 'Retention', 'Days played', 'ROAS', 'Range', '× D' + r.lastRoasDay + ' ROAS'];
+    if (cpi) cols.push('Revenue per install');
+    t.appendChild(h('thead', null, [h('tr', null, cols.map(function (c) { return h('th', { scope: 'col', text: c }); }))]));
+    var tb = h('tbody'), measured = {};
+    r.roas.forEach(function (p) { measured[p.day] = true; });
+    ROWS.forEach(function (d) {
+      var inData = d <= r.lastRoasDay;
+      var cells = [
+        h('th', { scope: 'row' }, ['D' + d, measured[d] ? h('span', { class: 'chip measured', text: 'measured' }) : null]),
+        h('td', { text: pct(r.base.R[d]) }),
+        h('td', { text: r.base.LT[d].toFixed(1) }),
+        h('td', { class: 'strong', text: pct(r.base.roas[d]) }),
+        h('td', { class: 'dim', text: inData ? '—' : pctRange(r.band.roasLow[d], r.band.roasHigh[d]) }),
+        h('td', { text: lastV > 0 ? (r.base.roas[d] / lastV).toFixed(2) + '×' : '—' })
+      ];
+      if (cpi) cells.push(h('td', { text: money(r.base.roas[d] * cpi) }));
+      tb.appendChild(h('tr', { class: inData ? 'in-data' : null }, cells));
+    });
+    t.appendChild(tb);
+  }
+
+  function checkIcon(kind) {
+    var svg = svgEl('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' });
+    var a = { stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', fill: 'none' };
+    function p(dAttr) { var o = { d: dAttr }; Object.keys(a).forEach(function (k) { o[k] = a[k]; }); svgEl('path', o, svg); }
+    if (kind === 'good') { svgEl('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: '0.16' }, svg); p('M4.8 8.3l2.2 2.2 4.2-4.6'); }
+    else if (kind === 'bad') { svgEl('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: '0.16' }, svg); p('M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8'); }
+    else if (kind === 'warn') { svgEl('path', { d: 'M8 1.8l6.6 11.6H1.4z', fill: 'currentColor', opacity: '0.2' }, svg); p('M8 6.2v3.3'); svgEl('circle', { cx: 8, cy: 11.6, r: 0.9, fill: 'currentColor' }, svg); }
+    else { svgEl('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: '0.16' }, svg); p('M8 7.4v3.8'); svgEl('circle', { cx: 8, cy: 4.9, r: 0.9, fill: 'currentColor' }, svg); }
+    return svg;
+  }
+
+  function renderGoals(r) {
+    var t = $('goals-table'), target = r.options.target, b = r.base.roas;
+    t.textContent = '';
+    var cps = CHECKPOINTS.filter(function (c) { return c >= r.roas[0].day; });
+    $('goals-sub').textContent = 'The ROAS a campaign needs at each checkpoint to reach ' + pct(target) +
+      ' by the deadline, if it follows this cohort\'s curve. Use it to set tROAS goals. Italic values are forecasts.';
+    t.appendChild(h('thead', null, [h('tr', null, [h('th', { scope: 'col', text: 'Break even by' })]
+      .concat(cps.map(function (c) { return h('th', { scope: 'col', text: 'D' + c + ' ROAS' }); }))
+      .concat([h('th', { scope: 'col', text: 'This cohort' })]))]));
+    var tb = h('tbody');
+    tb.appendChild(h('tr', { class: 'in-data' }, [h('th', { scope: 'row', text: 'This cohort now' })]
+      .concat(cps.map(function (c) { return h('td', { class: c > r.lastRoasDay ? 'fc' : 'strong', text: pct(b[c]) }); }))
+      .concat([h('td')])));
+    GOALS.forEach(function (H) {
+      var ok = r.base.payback != null && r.base.payback <= H;
+      var st = h('span', { class: 'status ' + (ok ? 'good' : 'bad') }, [checkIcon(ok ? 'good' : 'bad'), ok ? 'on track' : 'short']);
+      tb.appendChild(h('tr', null, [h('th', { scope: 'row', text: 'D' + H })]
+        .concat(cps.map(function (c) { return h('td', { class: c > r.lastRoasDay ? 'fc' : null, text: c < H && b[H] > 0 ? pct(target * b[c] / b[H]) : '—' }); }))
+        .concat([h('td', null, [st])])));
+    });
+    t.appendChild(tb);
+  }
+
+  function renderChecks(r, meta) {
+    var ul = $('checks');
+    ul.textContent = '';
+    function item(kind, text) { ul.appendChild(h('li', { class: kind }, [checkIcon(kind), h('span', { text: text })])); }
+    function grade(err) { var a = Math.abs(err); return a <= 0.1 ? 'good' : a <= 0.25 ? 'warn' : 'bad'; }
+    function off(err) { return 'model ' + (err >= 0 ? 'high' : 'low') + ' by ' + Math.abs(err * 100).toFixed(0) + '%'; }
+    var c = r.checks.roas;
+    if (c && c.actual > 0) {
+      var e1 = c.predicted / c.actual - 1;
+      item(grade(e1), 'Hold-out on ROAS: given only data up to D' + c.fromDay + ', the model puts D' + c.day + ' ROAS at ' + pct(c.predicted) +
+        '. Measured: ' + pct(c.actual) + ' (' + off(e1) + ').');
+    }
+    var cr = r.checks.retention;
+    if (cr && cr.actual > 0) {
+      var e2 = cr.predicted / cr.actual - 1;
+      item(grade(e2), 'Hold-out on retention: given retention up to D' + cr.toDay + ', the tail puts D' + cr.day + ' at ' + pct(cr.predicted) +
+        '. Measured: ' + pct(cr.actual) + ' (' + off(e2) + ').');
+    }
+    if (meta.agg) {
+      var sk = meta.agg.skipped;
+      if (sk.retention) item('info', 'D' + sk.retention.day + ' retention is left out: only ' + sk.retention.cohorts + ' cohort' + (sk.retention.cohorts === 1 ? ' has' : 's have') +
+        ' finished it (' + Math.round(sk.retention.share * 100) + '% of installs). It joins once 3 cohorts and 10% of installs reach D' + sk.retention.day + '.');
+      if (sk.roas) item('info', 'D' + sk.roas.day + ' ROAS is left out: only ' + sk.roas.cohorts + ' cohort' + (sk.roas.cohorts === 1 ? ' has' : 's have') +
+        ' finished it (' + Math.round(sk.roas.share * 100) + '% of spend).');
+      var s = meta.agg.summary;
+      if (s.unpaidInstalls > 0 && s.cost > 0) item('info', intFmt(s.unpaidInstalls) + ' installs in this selection have no spend (organic or untrusted). They count toward retention, not ROAS.');
+    }
+    r.notes.forEach(function (n) { item(n.level === 'warn' ? 'warn' : 'info', n.text); });
+    if (!ul.children.length) item('info', 'Add more days to get hold-out checks: the model predicts your last point from the earlier ones.');
+  }
+
+  // ---------- mode, inputs, wiring
+  function setMode(m) {
+    if (m === 'adjust' && !data) m = 'manual';
+    state.mode = m;
+    if (m === 'manual' && !state.rows) seedRows();
+    document.body.classList.toggle('is-manual', m === 'manual');
+    $('src-adjust').setAttribute('aria-pressed', String(m === 'adjust'));
+    $('src-manual').setAttribute('aria-pressed', String(m === 'manual'));
+    if (m === 'manual') renderManualTable();
+    update();
+  }
+  function showUploadError(text) { var e = $('upload-error'); e.textContent = text; e.hidden = false; }
+
+  function wire() {
+    $('src-adjust').addEventListener('click', function () { setMode('adjust'); });
+    $('src-manual').addEventListener('click', function () { setMode('manual'); });
+    ['from', 'to'].forEach(function (k) {
+      $('date-' + k).addEventListener('change', function (e) {
+        state[k] = e.target.value;
+        if (state.from && state.to && state.from > state.to) { var t = state.from; state.from = state.to; state.to = t; }
+        renderFilters(); update();
+      });
+    });
+    $('file-input').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      $('upload-error').hidden = true;
+      if (f.size > 15 * 1024 * 1024) { showUploadError(f.name + ' is over 15 MB. Export fewer columns or a shorter date range.'); return; }
+      var fr = new FileReader();
+      fr.onload = function () {
+        var text = String(fr.result), d = F.loadAdjustExport(text, f.name);
+        if (!d.ok) {
+          showUploadError(d.empty ? f.name + ' has no rows with an install date.'
+            : 'Can\'t read ' + f.name + ': it has no ' + d.schema.missing.join(', ') + ' column. Export the Adjust report grouped by day, with installs, cost, roas_dN and retention_rate_dN.');
+          return;
+        }
+        upload = { name: f.name, text: text };
+        saveUpload();
+        data = d;
+        state.from = ''; state.to = '';
+        applyDefaultDims(); renderFilters(); renderFoot(); syncSourceButtons();
+        setMode('adjust');
+      };
+      fr.onerror = function () { showUploadError('Could not read ' + f.name + '.'); };
+      fr.readAsText(f);
+    });
+    $('use-bundled').addEventListener('click', function () {
+      upload = null; saveUpload(); loadData();
+      state.from = ''; state.to = '';
+      if (data) { applyDefaultDims(); renderFilters(); }
+      renderFoot();
+      $('upload-error').hidden = true;
+      setMode(data ? 'adjust' : 'manual');
+    });
+    $('add-row').addEventListener('click', function () {
+      var maxD = 0;
+      state.rows.forEach(function (row, i) { if (i > 0) maxD = Math.max(maxD, num(row.day, 0)); });
+      var next = maxD < 1 ? 1 : maxD < 3 ? 3 : maxD < 7 ? 7 : maxD < 14 ? 14 : maxD < 30 ? 30 : Math.min(365, maxD * 2);
+      state.rows.push({ day: String(next), ret: '', roas: '' });
+      edited();
+      renderManualTable();
+      var inp = $('mret-' + (state.rows.length - 1));
+      if (inp) inp.focus();
+      update();
+    });
+    $('reseed').addEventListener('click', function () { seedRows(); renderManualTable(); update(); });
+    $('target').addEventListener('input', function (e) { state.target = e.target.value; update(); });
+    $('cpi').addEventListener('input', function (e) { state.cpi = e.target.value; update(); });
+    $('tail-spread').addEventListener('input', function (e) { state.tailSpread = e.target.value; update(); });
+    $('drift-spread').addEventListener('input', function (e) { state.driftSpread = e.target.value; update(); });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="drift"]'), function (i) {
+      i.addEventListener('change', function () { if (i.checked) { state.driftMode = i.value; update(); } });
+    });
+    $('drift-custom-val').addEventListener('input', function (e) { state.driftCustom = e.target.value; state.driftMode = 'custom'; update(); });
+    Array.prototype.forEach.call(document.querySelectorAll('#horizon button'), function (b) {
+      b.addEventListener('click', function () {
+        state.horizon = Number(b.getAttribute('data-h'));
+        syncHorizon(); save(); renderCharts();
+      });
+    });
+    var widths = {};
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function (entries) {
+        var changed = entries.some(function (en) {
+          var w = Math.round(en.contentRect.width);
+          if (widths[en.target.id] !== w) { widths[en.target.id] = w; return true; }
+          return false;
+        });
+        if (changed) requestAnimationFrame(renderCharts);
+      });
+      ['plot-roas', 'plot-ret', 'plot-arp'].forEach(function (id) { ro.observe($(id)); });
+    } else {
+      window.addEventListener('resize', function () { requestAnimationFrame(renderCharts); });
+    }
+  }
+  function syncHorizon() {
+    Array.prototype.forEach.call(document.querySelectorAll('#horizon button'), function (b) {
+      b.setAttribute('aria-pressed', String(Number(b.getAttribute('data-h')) === state.horizon));
+    });
+  }
+
+  function init() {
+    restore();
+    loadData();
+    if (data) {
+      if (!state.dimsSet) applyDefaultDims();
+      renderFilters();
+    } else {
+      state.mode = 'manual';
+    }
+    renderFoot();
+    $('target').value = state.target;
+    $('cpi').value = state.cpi;
+    $('tail-spread').value = state.tailSpread;
+    $('drift-spread').value = state.driftSpread;
+    $('drift-custom-val').value = state.driftCustom;
+    syncHorizon();
+    wire();
+    setMode(state.mode);
+  }
+  init();
+})();
+</script>

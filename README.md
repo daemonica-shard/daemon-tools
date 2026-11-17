@@ -9,6 +9,7 @@ Automation & tooling monorepo for mobile games.
 | `.github/workflows/` | Reusable CI workflows (GameCI Unity build) |
 | `mcp-server/` | Hosted multi-tenant MCP server (one endpoint per project, bearer-key auth, audit log) |
 | `lib/firebase/` | Shared Firebase fetchers (Remote Config template + versions, TTL cache) |
+| `lib/roas-forecast/` | ROAS / payback forecast from early retention + ROAS: library, plus a single-file page that reads Adjust exports |
 | `config/` | `tenants.example.yaml` — real tenant config lives only on the server |
 | `deploy/` | The whole server: Caddy + Docker Compose + landing (see `deploy/README.md`) |
 

@@ -20,6 +20,11 @@ open lib/roas-forecast/dist/roas-forecast.html
 page opens on example numbers and a **Load export…** button reads a CSV in the browser. Nothing
 is uploaded anywhere.
 
+The server hosts the same page at `tools.<domain>/roas-forecast/` (see [`web/`](../../web)): there an
+**Upload export…** saves the CSV on the server, and everyone who opens the page sees the latest
+one. That build passes `buildPage({ host: { api: "api/export" } })`, which points the page at the
+server instead of the bundled export and the browser's own storage.
+
 > **This repo is public.** A page built with `--csv` carries spend, ROAS and campaign names. The
 > build only writes it to a `dist/` folder (gitignored) or outside the repo. Don't commit
 > exports.

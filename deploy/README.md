@@ -97,6 +97,10 @@ Built and pushed by `.github/workflows/deploy-mcp.yml`:
 - `ghcr.io/<owner>/daemon-tools-mcp:prod` — promoted manually via workflow_dispatch
 - `:sha-<commit>` — every build, for pinning/rollback
 
+And by `.github/workflows/deploy-web.yml`: `ghcr.io/<owner>/daemon-tools-web:latest` (plus
+`:sha-<commit>`) on every trunk push touching `web/` or `lib/roas-forecast/`, auto-deployed to
+`tools.<domain>`. One instance, no dev/prod split.
+
 NOTE: the first push creates the GHCR package as **private**. Make it public once
 (GitHub → org → Packages → daemon-tools-mcp → settings) so the server can pull anonymously.
 

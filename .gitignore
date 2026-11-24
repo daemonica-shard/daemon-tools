@@ -44,3 +44,6 @@ pnpm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 *.swp
+
+# Uploads to a local web server: real spend and revenue
+web/data/

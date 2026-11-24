@@ -1,0 +1,72 @@
+name: Deploy web
+
+on:
+  push:
+    branches: [trunk]
+    paths:
+      - 'web/**'
+      - 'lib/roas-forecast/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/daemon-tools-web
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io requires a lowercase owner; github.repository_owner may not be.
+      - name: Resolve image name
+        id: image
+        run: echo "image=$(echo '${{ env.IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: web/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.image }}:latest
+            ${{ steps.image.outputs.image }}:sha-${{ github.sha }}
+
+  # One instance, no dev/prod split: it serves pages and keeps uploads, and a bad build is a
+  # `sha-` tag away from rolled back.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      HAVE_SERVER: ${{ secrets.DEPLOY_HOST != '' }}
+    steps:
+      - name: Deploy
+        if: env.HAVE_SERVER == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/daemon-tools
+            # The service reaches the server with an rsync of deploy/, which CI does not do.
+            if ! docker compose config --services | grep -qx web; then
+              echo "The server's compose file has no web service yet: see deploy/SETUP.md, step 15."
+              exit 0
+            fi
+            docker compose pull web
+            docker compose up -d web
+            docker image prune -f
+      - name: No server configured
+        if: env.HAVE_SERVER != 'true'
+        run: echo "DEPLOY_HOST secret not set — image pushed, deploy skipped."

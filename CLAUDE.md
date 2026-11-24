@@ -31,6 +31,7 @@ daemon-tools/                 (public, daemonica org)
 │   ├── firebase/
 │   ├── coda/
 │   └── notify/               # Telegram/Discord sender
+├── web/                      # browser tools at tools.<domain>, no sign-in (ROAS forecast)
 ├── agents/                   # Claude agent definitions (upstream-porter, onboarding)
 ├── deploy/                   # Caddy + docker-compose
 └── docs/

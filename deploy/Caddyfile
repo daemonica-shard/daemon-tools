@@ -20,6 +20,12 @@ grafana.{$DOMAIN} {
 	reverse_proxy grafana:3000
 }
 
+# Browser tools (web/ in the repo). No sign-in: anyone with a page's address can use it.
+{$WEB_SUBDOMAIN:tools}.{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}
+
 # Metrics ingest only. Prometheus' query API and UI are deliberately NOT routed here: the
 # ingest token would otherwise also grant read access to everything the server has recorded.
 # Grafana reads Prometheus over the internal network instead, where no token is involved.

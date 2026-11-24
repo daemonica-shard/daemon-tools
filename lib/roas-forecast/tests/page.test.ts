@@ -20,6 +20,10 @@ function bundledCsv(html: string): string {
   return /<script type="text\/csv" id="bundled-export"[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
 }
 
+function hostConfig(html: string): unknown {
+  return JSON.parse(/<script type="application\/json" id="host-config">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "null");
+}
+
 function scripts(html: string): string[] {
   return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 }
@@ -36,9 +40,16 @@ describe("page build", () => {
   it("builds a page whose scripts parse, with and without an export", () => {
     for (const csv of [undefined, { text: CSV, name: "2026-03-31_adjust_report_export.csv" }]) {
       const { html } = buildPage({ csv });
-      expect(html).not.toMatch(/@BUNDLED_|\/\*@LIBRARY@\*\//);
+      expect(html).not.toMatch(/@BUNDLED_|@HOST_CONFIG@|\/\*@LIBRARY@\*\//);
+      expect(hostConfig(html)).toEqual({});
       for (const s of scripts(html)) expect(() => new vm.Script(s)).not.toThrow();
     }
+  });
+
+  it("tells a hosted page where the shared export lives, without letting a value close the script", () => {
+    const { html } = buildPage({ host: { api: "api/export", note: "</script><b>" } });
+    expect(hostConfig(html)).toEqual({ api: "api/export", note: "</script><b>" });
+    expect(html).not.toContain("</script><b>");
   });
 
   it("bundles only the columns the page reads", () => {

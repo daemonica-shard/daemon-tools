@@ -379,6 +379,7 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
 </div>
 
 <script type="text/csv" id="bundled-export" data-name="@BUNDLED_NAME@">@BUNDLED_CSV@</script>
+<script type="application/json" id="host-config">@HOST_CONFIG@</script>
 <script>
 /*@LIBRARY@*/
 </script>
@@ -400,10 +401,14 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
   // Shown when there is no export to start from: [day, retention %, ROAS %].
   var EXAMPLE = [[0, '', '10'], [1, '40', '14'], [3, '27', '19'], [7, '18', '26'], [14, '13', '33']];
   var KEY = 'cohort-roas-forecast/v1';
+  // Set when a server hosts the page: `api` is where the export everyone sees is read and saved.
+  var HOST = hostConfig();
 
+  // `source` names the export the date range was picked for, so a newer export resets it.
   var state = { v: 2, mode: 'adjust', dims: {}, dimsSet: false, from: '', to: '', horizon: 365, driftMode: 'auto', driftCustom: '-10',
-                tailSpread: '0.10', driftSpread: '5', target: '100', cpi: '', rows: null, example: false, paidOnly: false };
-  var upload = null, data = null, view = null;
+                tailSpread: '0.10', driftSpread: '5', target: '100', cpi: '', rows: null, example: false, paidOnly: false, source: '' };
+  // upload: loaded in this browser only. shared: the export on the server, when hosted.
+  var upload = null, shared = null, data = null, view = null;
 
   function $(id) { return document.getElementById(id); }
   function h(tag, attrs, kids) {
@@ -461,13 +466,26 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     if (!iso) return '';
     return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
+  // A moment, in the viewer's time zone: "Nov 24, 14:05".
+  function whenLbl(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  }
   function months(d) { return d < 60 ? Math.max(1, Math.round(d / 7)) + ' weeks' : Math.round(d / 30.44) + ' months'; }
   function fmtU(u, cpi) { return cpi ? money(u * cpi) : pct(u) + ' of CPI'; }
   function windowLbl(w) { return 'D' + w.start + (w.end > w.start ? '–D' + w.end : ''); }
 
   // ---------- storage (per-viewer convenience only)
+  function hostConfig() {
+    try {
+      var c = JSON.parse(document.getElementById('host-config').textContent);
+      return c && typeof c === 'object' ? c : {};
+    } catch (e) { return {}; }
+  }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ } }
   function saveUpload() {
+    // Hosted, the server keeps the export. One it could not save lasts for this visit only.
+    if (HOST.api) return;
     try {
       if (upload) localStorage.setItem(KEY + ':upload', JSON.stringify(upload));
       else localStorage.removeItem(KEY + ':upload');
@@ -482,10 +500,12 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
         Object.keys(state).forEach(function (k) { if (k in s && k !== 'v') state[k] = s[k]; });
       }
     } catch (e) { /* ignore */ }
-    try {
-      var u = JSON.parse(localStorage.getItem(KEY + ':upload') || 'null');
-      if (u && typeof u.text === 'string') upload = u;
-    } catch (e) { /* ignore */ }
+    if (!HOST.api) {
+      try {
+        var u = JSON.parse(localStorage.getItem(KEY + ':upload') || 'null');
+        if (u && typeof u.text === 'string') upload = u;
+      } catch (e) { /* ignore */ }
+    }
     if ([90, 180, 365, 730].indexOf(state.horizon) < 0) state.horizon = 365;
     if (!state.dims || typeof state.dims !== 'object') state.dims = {};
     if (!Array.isArray(state.rows)) state.rows = null;
@@ -497,6 +517,7 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
 
   // ---------- data
   function bundled() {
+    if (HOST.api) return shared;
     var el = $('bundled-export'), text = el.textContent.trim();
     return text ? { name: el.getAttribute('data-name') || 'export.csv', text: text } : null;
   }
@@ -648,11 +669,15 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
   function renderFoot() {
     var src = upload || bundled();
     if (!data || !src) {
-      $('foot').textContent = 'No export loaded. Load an Adjust report export above, or type a cohort in by hand. Inputs are remembered in this browser.';
+      $('foot').textContent = HOST.api
+        ? 'No export uploaded yet. Load an Adjust report export above: it is saved on the server for everyone who opens this page. Or type a cohort in by hand.'
+        : 'No export loaded. Load an Adjust report export above, or type a cohort in by hand. Inputs are remembered in this browser.';
       return;
     }
-    $('foot').textContent = 'Data: ' + src.name + ' (' + data.cohorts.length + ' rows, ' +
-      (upload ? 'loaded in this browser only' : 'bundled with this page') + '). Cohort-day cells after ' +
+    var where = upload ? 'loaded in this browser only' + (HOST.api ? ', not saved on the server' : '')
+      : !HOST.api ? 'bundled with this page'
+      : ['uploaded', whenLbl(src.uploadedAt)].filter(Boolean).join(' ');
+    $('foot').textContent = 'Data: ' + src.name + ' (' + data.cohorts.length + ' rows, ' + where + '). Cohort-day cells after ' +
       dateLbl(F.fromDay(data.completeThrough)) + ' are ignored because they are still filling in. Inputs are remembered in this browser.';
   }
 
@@ -1231,6 +1256,51 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
     update();
   }
   function showUploadError(text) { var e = $('upload-error'); e.textContent = text; e.hidden = false; }
+  function useExport(d) {
+    data = d;
+    state.from = ''; state.to = ''; state.source = sourceId();
+    applyDefaultDims(); renderFilters(); renderFoot(); syncSourceButtons();
+    setMode('adjust');
+  }
+  // Which export the saved date range was picked for.
+  function sourceId() { var s = upload || bundled(); return s ? s.name + '@' + (s.uploadedAt || '') : ''; }
+
+  // ---------- hosted: the server keeps one export for everyone who opens the page
+  function reason(err) {
+    return err instanceof TypeError ? 'the server could not be reached' : String(err.message).replace(/\.$/, '');
+  }
+  function answer(r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok) throw new Error(j.error || 'the server answered ' + r.status);
+      return j;
+    });
+  }
+  function fetchShared(done) {
+    fetch(HOST.api, { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.status === 204 ? null : answer(r); })
+      .then(function (j) {
+        if (j && typeof j.csv === 'string') shared = { name: j.name || 'export.csv', text: j.csv, uploadedAt: j.uploadedAt };
+      }, function (err) { showUploadError('Could not load the shared export: ' + reason(err) + '.'); })
+      .then(done);
+  }
+  // Saved on the server for everyone. If that fails, the export still loads, for this visit only.
+  function share(name, text, d) {
+    var label = document.querySelector('label[for="file-input"]'), input = $('file-input');
+    label.textContent = 'Saving…'; input.disabled = true;
+    fetch(HOST.api, {
+      method: 'POST', credentials: 'same-origin', body: text,
+      headers: { 'Content-Type': 'text/csv', 'X-File-Name': encodeURIComponent(name) }
+    }).then(answer).then(function (j) {
+      shared = { name: j.name || name, text: text, uploadedAt: j.uploadedAt };
+      upload = null;
+    }, function (err) {
+      upload = { name: name, text: text };
+      showUploadError('Not saved on the server: ' + reason(err) + '. It is loaded in this browser for this visit only.');
+    }).then(function () {
+      label.textContent = 'Upload export…'; input.disabled = false;
+      useExport(d);
+    });
+  }
 
   function wire() {
     $('src-adjust').addEventListener('click', function () { setMode('adjust'); });
@@ -1256,12 +1326,10 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
             : 'Can\'t read ' + f.name + ': it has no ' + d.schema.missing.join(', ') + ' column. Export the Adjust report grouped by day, with installs, cost, roas_dN and retention_rate_dN.');
           return;
         }
+        if (HOST.api) { share(f.name, text, d); return; }
         upload = { name: f.name, text: text };
         saveUpload();
-        data = d;
-        state.from = ''; state.to = '';
-        applyDefaultDims(); renderFilters(); renderFoot(); syncSourceButtons();
-        setMode('adjust');
+        useExport(d);
       };
       fr.onerror = function () { showUploadError('Could not read ' + f.name + '.'); };
       fr.readAsText(f);
@@ -1326,8 +1394,19 @@ ROAS(N) = ROAS(n) + Σ R(d) × u(d)  for d = n+1 … N</pre>
 
   function init() {
     restore();
+    if (HOST.api) {
+      document.querySelector('label[for="file-input"]').textContent = 'Upload export…';
+      $('use-bundled').textContent = 'Use the shared export';
+      fetchShared(start);
+    } else {
+      start();
+    }
+  }
+  function start() {
     loadData();
     if (data) {
+      // Dates picked for another export would hide this one's newer install days.
+      if (state.source !== sourceId()) { state.from = ''; state.to = ''; state.source = sourceId(); }
       if (!state.dimsSet) applyDefaultDims();
       renderFilters();
     } else {

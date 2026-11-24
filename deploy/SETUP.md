@@ -201,6 +201,7 @@ service that never starts serving:
 | A | `auth` | `SERVER_IP` | Keycloak |
 | A | `grafana` | `SERVER_IP` | dashboards |
 | A | `otel` | `SERVER_IP` | metrics ingest |
+| A | `tools` | `SERVER_IP` | browser tools (`WEB_SUBDOMAIN`, step 15) |
 
 **Gotcha:** delete the registrar's default parking records first — Namecheap ships a URL Redirect
 Record on `@` and a `www` CNAME to its parking page, and a redirect record can't coexist with an A
@@ -497,6 +498,55 @@ Expect `claude_code_token_usage_tokens_total` and friends. **If the names differ
 rather than assuming it is broken** — OTLP-to-Prometheus name translation (dots to underscores,
 unit appended, `_total` for counters) is the part most likely to shift between versions, and the
 dashboard in `deploy/grafana/provisioning/dashboards/` hardcodes the expected spelling.
+
+## 15. Browser tools — `tools.DOMAIN` (optional)
+
+Pages for people rather than for Claude, from `web/` in the repo: so far the ROAS forecast at
+`/roas-forecast/`. Uploading an Adjust export there saves it on the server, and everyone who opens
+the page sees the latest one.
+
+**There is no sign-in.** Anyone who has a page's address can open it, read the export on it (spend,
+revenue, campaign names) and upload a new one. The bare `tools.DOMAIN` answers 404 and every
+response tells search engines to stay out, so the hostname alone, which certificate transparency
+logs publish, does not lead to a page. That is all the protection there is.
+
+The subdomain is `WEB_SUBDOMAIN` in `.env`, and it defaults to `tools`, so `.env` needs nothing for
+it. Renaming it later takes a new DNS record and `docker compose up -d caddy`.
+
+### 15.1 Image
+
+The **Deploy web** workflow builds `ghcr.io/<owner>/daemon-tools-web` on every trunk push that
+touches `web/` or `lib/roas-forecast/`, and redeploys it once the server has the service. Its first
+push creates the package as **private**: make it public (same place as the MCP image), or the
+server cannot pull it.
+
+### 15.2 Start
+
+With the `tools` A record from step 9 in place:
+
+```sh
+# Mac, from the repo root. --inplace: the Caddyfile is a single-file mount (see README.md)
+rsync -av --inplace deploy/Caddyfile ADMIN@SERVER_IP:/opt/daemon-tools/Caddyfile
+rsync -av deploy/docker-compose.yml deploy/.env.example ADMIN@SERVER_IP:/opt/daemon-tools/
+
+# server
+docker compose up -d web
+docker compose up -d caddy           # recreated for WEB_SUBDOMAIN; the other sites blink once
+```
+
+Uploads live in the `web_data` volume under `/data/roas-forecast/exports`, one CSV + one JSON per
+upload. The 10 newest are kept, and the page shows the newest. They are copies of Adjust exports,
+so they are not on the backup list.
+
+### 15.3 Verify
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://tools.DOMAIN/roas-forecast/   # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://tools.DOMAIN/                 # 404
+```
+
+Then open `https://tools.DOMAIN/roas-forecast`, upload an export, and open the page in another
+browser: it shows the same export, with the upload's date and time in the footer.
 
 ---
 

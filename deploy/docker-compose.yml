@@ -8,6 +8,7 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      WEB_SUBDOMAIN: ${WEB_SUBDOMAIN:-tools}
       # Gates metrics ingest. `:?` because an *absent* value would expand to empty, and the
       # Caddy matcher would then admit anyone sending a bare `Authorization: Bearer ` — a
       # missing token must stop the stack, not quietly open the write path.
@@ -155,6 +156,19 @@ services:
       prometheus:
         condition: service_healthy
 
+  # Browser tools at WEB_SUBDOMAIN.DOMAIN: the ROAS forecast so far, at /roas-forecast/. No
+  # sign-in: anyone with a page's address can open it and upload. Uploads live in web_data.
+  web:
+    image: ghcr.io/${GHCR_OWNER}/daemon-tools-web:latest
+    restart: unless-stopped
+    volumes:
+      - web_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   caddy_data:
   caddy_config:
@@ -163,3 +177,4 @@ volumes:
   keycloak_db:
   prometheus_data:
   grafana_data:
+  web_data:

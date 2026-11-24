@@ -5,3 +5,4 @@ audit
 .env
 .env.*
 .git
+web/data

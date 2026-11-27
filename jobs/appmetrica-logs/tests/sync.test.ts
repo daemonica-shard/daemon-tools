@@ -5,7 +5,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Application, ExportFile, ExportRequest } from "@daemon-tools/appmetrica";
 import { assertOutsideRepo, findApp, readToken } from "../src/config.js";
-import { chunks, dayEnd, days, localDate, sync, type DayRecord, type TableSpec } from "../src/sync.js";
+import { chunks, dayEnd, days, localDate, sync, tableFolder, type DayRecord, type TableSpec } from "../src/sync.js";
 
 // Moscow, UTC+3. "Now" is 2026-11-24 15:00 there.
 const APP: Application = { id: 1234567, name: "Bubble Pop", timeZoneName: "Europe/Moscow", timeZoneOffset: 10800, permission: "own" };
@@ -188,6 +188,31 @@ describe("sync", () => {
     const refreshed = fakeClient();
     await pullDays(refreshed, "2026-11-21", "2026-11-21", { ...wider, refresh: true });
     expect(refreshed.requests).toHaveLength(1);
+  });
+
+  // A subset must never pass for the whole table: the filter goes to AppMetrica, and the files to their own folder.
+  it("keeps a filtered pull in a folder of its own and asks AppMetrica for the filter", async () => {
+    const filtered = { ...SPEC, filters: { ad_revenue_type: "4", ad_revenue_network: "Mintegral Bidding" } };
+    const client = fakeClient();
+    const [summary] = await pullDays(client, "2026-11-21", "2026-11-21", { tables: [filtered] });
+
+    expect(client.requests[0].filters).toEqual({ ad_revenue_type: "4", ad_revenue_network: "Mintegral Bidding" });
+    const folder = join(SPEC.table, "ad_revenue_network=Mintegral%20Bidding", "ad_revenue_type=4");
+    expect(tableFolder(filtered)).toBe(folder);
+    expect(summary.folder).toBe(folder);
+    const day = JSON.parse(await readFile(join(dir, folder, "2026-11-21.json"), "utf8")) as DayRecord;
+    expect(day).toMatchObject({ rows: 2, final: true, filters: filtered.filters });
+    expect(await readdir(join(dir, SPEC.table))).toEqual(["ad_revenue_network=Mintegral%20Bidding"]);
+
+    // The whole table's day is still missing, and the filtered one is final.
+    const whole = fakeClient();
+    await pullDays(whole, "2026-11-21", "2026-11-21");
+    expect(whole.requests).toHaveLength(1);
+    expect(whole.requests[0].filters).toBeUndefined();
+    expect((await record("2026-11-21")).filters).toBeUndefined();
+    const again = fakeClient();
+    await pullDays(again, "2026-11-21", "2026-11-21", { tables: [filtered] });
+    expect(again.requests).toHaveLength(0);
   });
 
   it("keeps a settled day partial while AppMetrica reports unreadable shards", async () => {

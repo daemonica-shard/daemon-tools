@@ -52,9 +52,19 @@ was fetched:
 ```
 
 The default tables are AppMetrica's standard ones: ad impressions with their revenue
-(`ad_revenue_events`), installs (`installations`) and session starts (`sessions_starts`). Custom
+(`ad_revenue_events`), installs (`installations`), session starts (`sessions_starts`) and in-app
+purchases (`revenue_events`, in the currency the game reported: TEL sends the store's local price). Custom
 events (`events`, everything the game logs itself, such as TEL's `ADS_PAYED`) run to over a million
-rows a day, so they're only pulled when asked for: `--tables events`.
+rows a day, so they're only pulled when asked for: `--tables events`. Usually one event is enough, and
+AppMetrica can filter on any column's exact value:
+
+```sh
+node jobs/appmetrica-logs/dist/index.js pull --app <id> --out ~/somewhere/appmetrica --tables events \
+  --filter event_name=GameData --chunk-days 7
+```
+
+A filtered pull goes to a folder of its own, `<table>/<column>=<value>/` (Hive's partition style), so
+`events/*.parquet` only ever holds the whole table. Repeat `--filter` to narrow further.
 
 - **Parquet, because the CSV is huge.** For one game, a day of AppMetrica's CSV was 273 MB of
   impressions and 584 MB of events; as Parquet, 6 MB and 17 MB. Every column is kept as text,

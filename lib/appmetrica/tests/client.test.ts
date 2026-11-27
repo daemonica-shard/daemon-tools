@@ -186,7 +186,8 @@ describe("management calls", () => {
           request_id: "abc", query: "date_since=...", status: 0, total_progress: 0.5, total_rows_loaded: 10, shards_unavailable: 0,
         },
       ]),
-      Response.json({ message: "Request cancellation has been scheduled." }),
+      // The live API answers the cancel in plain text.
+      new Response("Request cancellation has been scheduled.\n", { status: 200, headers: { "Content-Type": "text/plain" } }),
     ]);
     expect(await client.activeQueries(1234567)).toEqual([
       { requestId: "abc", entity: 13, status: 0, progress: 0.5, rowsLoaded: 10, createTime: "2026-11-24 10:00:00", query: "date_since=..." },

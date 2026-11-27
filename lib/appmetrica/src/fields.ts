@@ -37,6 +37,7 @@ const DEVICE = [
 export const RECEIVE_DATETIME: Partial<Record<LogsTable, string>> = {
   ad_revenue_events: "ad_revenue_receive_datetime",
   events: "event_receive_datetime",
+  revenue_events: "event_receive_datetime",
   sessions_starts: "session_start_receive_datetime",
   installations: "install_receive_datetime",
 };
@@ -78,6 +79,31 @@ export const DEFAULT_FIELDS: Partial<Record<LogsTable, readonly string[]>> = {
     "installation_id",
     ...DEVICE,
     "app_build_number",
+  ],
+  // One row per in-app purchase: reported by the game (reportRevenue) or collected by AppMetrica itself
+  // (is_revenue_autocollected). revenue_price is in revenue_currency, which is whatever the game sent: TEL
+  // sends the store's local price and currency, before the store's cut. This table has no device_type.
+  revenue_events: [
+    "event_datetime",
+    "event_timestamp",
+    "event_receive_datetime",
+    "event_receive_timestamp",
+    "event_name",
+    "revenue_quantity",
+    "revenue_price",
+    "revenue_currency",
+    "revenue_product_id",
+    "revenue_order_id",
+    "revenue_order_id_source",
+    "is_revenue_verified",
+    "is_revenue_autocollected",
+    "revenue_inapp_type",
+    "revenue_event_type",
+    "session_id",
+    "installation_id",
+    ...DEVICE.filter((field) => field !== "device_type"),
+    "app_build_number",
+    "appmetrica_sdk_version",
   ],
   sessions_starts: [
     "session_start_datetime",

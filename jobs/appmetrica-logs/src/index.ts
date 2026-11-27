@@ -4,18 +4,24 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppMetricaClient, DEFAULT_FIELDS, LOGS_TABLES, RECEIVE_DATETIME, type LogsTable } from "@daemon-tools/appmetrica";
 import { assertOutsideRepo, findApp, formatOffset, readToken } from "./config.js";
-import { formatBytes, localDate, sync, type TableSpec } from "./sync.js";
+import { formatBytes, localDate, sync, tableFolder, type TableSpec } from "./sync.js";
 
 // Custom events (the events table) are left out by default: over a million rows a day, and the
 // standard tables cover revenue, installs and activity.
-const DEFAULT_TABLES: LogsTable[] = ["ad_revenue_events", "installations", "sessions_starts"];
+const DEFAULT_TABLES: LogsTable[] = ["ad_revenue_events", "installations", "sessions_starts", "revenue_events"];
 const DEFAULT_DAYS = 30;
 // Days per export. Small tables go a month at a time, since AppMetrica takes about as long to
 // prepare a month as a day. Big ones stay at a day: a day of impressions is already ~270 MB of CSV.
-const CHUNK_DAYS: Partial<Record<LogsTable, number>> = { installations: 31, sessions_starts: 31 };
+const CHUNK_DAYS: Partial<Record<LogsTable, number>> = { installations: 31, sessions_starts: 31, revenue_events: 31 };
 
-function spec(table: LogsTable): TableSpec {
-  return { table, fields: DEFAULT_FIELDS[table]!, dayColumn: RECEIVE_DATETIME[table]!, chunkDays: CHUNK_DAYS[table] ?? 1 };
+function spec(table: LogsTable, chunkDays?: number, fields?: string[], filters?: Record<string, string>): TableSpec {
+  return {
+    table,
+    fields: fields ?? DEFAULT_FIELDS[table]!,
+    dayColumn: RECEIVE_DATETIME[table]!,
+    chunkDays: chunkDays ?? CHUNK_DAYS[table] ?? 1,
+    ...(filters ? { filters } : {}),
+  };
 }
 
 const USAGE = `appmetrica-logs: download AppMetrica's raw logs (ad impressions, events, sessions, installs) as Parquet
@@ -33,6 +39,15 @@ Options for pull:
   --tables LIST   comma-separated (default: ${DEFAULT_TABLES.join(",")})
   --refresh       download final days again too
   --parallel N    exports in flight at once, 1 to 3 (default 3, AppMetrica's limit per app)
+  --chunk-days N  days per export, for every table pulled (default: 1 for impressions and events,
+                  31 for the small tables). For a big app, AppMetrica takes about as long to prepare
+                  several days as one, so more days per export can cut the wait many times over.
+  --fields LIST   comma-separated columns instead of the defaults, for one table (--tables with a
+                  single name). Must include the table's arrival time column, which splits days.
+                  Fewer columns make smaller files; days pulled with other columns are pulled again.
+  --filter F=V    only rows whose column F equals V, for one table (--tables with a single name);
+                  repeat for more. E.g. --tables events --filter event_name=GameData. Files go to
+                  DIR/<app id>/<table>/F=V/<yyyy-mm-dd>.parquet, apart from the whole table's.
 
 Days are by arrival at AppMetrica, in the app's time zone. A day becomes final a full day after it
 ends; until then every run downloads it again. Final days are skipped, so a re-run fetches only
@@ -60,6 +75,9 @@ interface PullArgs {
   tables: LogsTable[];
   refresh: boolean;
   parallel: number;
+  chunkDays?: number;
+  fields?: string[];
+  filters?: Record<string, string>;
 }
 
 function options(argv: string[], handle: (arg: string, next: () => string) => boolean): void {
@@ -109,11 +127,33 @@ function parsePull(argv: string[]): PullArgs {
       const n = Number(next());
       if (!Number.isInteger(n) || n < 1 || n > 3) throw new Error("--parallel must be 1, 2 or 3");
       args.parallel = n;
+    } else if (arg === "--chunk-days") {
+      const n = Number(next());
+      if (!Number.isInteger(n) || n < 1 || n > 31) throw new Error("--chunk-days must be a whole number from 1 to 31");
+      args.chunkDays = n;
+    } else if (arg === "--fields") {
+      args.fields = next().split(",").map((f) => f.trim()).filter(Boolean);
+    } else if (arg === "--filter") {
+      const value = next();
+      const eq = value.indexOf("=");
+      const field = value.slice(0, eq);
+      if (eq < 1 || !/^[a-z0-9_]+$/.test(field) || eq === value.length - 1) {
+        throw new Error(`--filter takes column=value, e.g. event_name=GameData: got ${value}`);
+      }
+      args.filters = { ...args.filters, [field]: value.slice(eq + 1) };
     } else return false;
     return true;
   });
   if (!args.app) throw new Error('pull needs --app: an id or name from "appmetrica-logs apps"');
   if (!args.out) throw new Error("pull needs --out: a folder outside this repo");
+  if (args.filters && args.tables!.length !== 1) throw new Error("--filter applies to one table: pass --tables with a single name");
+  if (args.fields) {
+    if (args.tables!.length !== 1) throw new Error("--fields applies to one table: pass --tables with a single name");
+    const bad = args.fields.filter((f) => !/^[a-z0-9_]+$/.test(f));
+    if (bad.length > 0) throw new Error(`Not a column name: ${bad.join(", ")}`);
+    const dayColumn = RECEIVE_DATETIME[args.tables![0]]!;
+    if (!args.fields.includes(dayColumn)) throw new Error(`--fields must include ${dayColumn}, which splits the export into days`);
+  }
   return args as PullArgs;
 }
 
@@ -167,7 +207,7 @@ async function pull(args: PullArgs): Promise<void> {
   const summaries = await sync({
     client,
     app,
-    tables: args.tables.map(spec),
+    tables: args.tables.map((t) => spec(t, args.chunkDays, args.fields, args.filters)),
     since,
     until,
     dir,
@@ -179,7 +219,7 @@ async function pull(args: PullArgs): Promise<void> {
   for (const s of summaries) {
     const partial = s.partial > 0 ? ` (${s.partial} partial, fetched again next run)` : "";
     console.log(
-      `${s.table}: ${s.downloaded} days downloaded in ${s.exports} exports${partial}, ${s.rows.toLocaleString("en-US")} rows, ` +
+      `${s.folder}: ${s.downloaded} days downloaded in ${s.exports} exports${partial}, ${s.rows.toLocaleString("en-US")} rows, ` +
         `${formatBytes(s.parquetBytes)} kept (${formatBytes(s.csvBytes)} as CSV). ${s.skipped} days were already final.`,
     );
   }

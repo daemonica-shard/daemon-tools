@@ -1,3 +1,4 @@
+import { setMaxListeners } from "node:events";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,6 +34,21 @@ export interface TableSpec {
   dayColumn: string;
   /** Days per export, at most. Default 1. */
   chunkDays?: number;
+  /**
+   * Only rows whose field equals the value, e.g. { event_name: "GameData" }. A filtered pull keeps its
+   * own folder (see tableFolder), so it never passes for the whole table.
+   */
+  filters?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The table's folder under the app's: <table>, or <table>/<field>=<value>/… for a filtered pull, in
+ * Hive's partition style. DuckDB reads either with a plain glob, and <table>/*.parquet never picks up
+ * a filtered subset.
+ */
+export function tableFolder(spec: Pick<TableSpec, "table" | "filters">): string {
+  const filters = Object.entries(spec.filters ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return join(spec.table, ...filters.map(([field, value]) => `${field}=${encodeURIComponent(value)}`));
 }
 
 /** The .json next to each day's Parquet file. */
@@ -42,6 +58,8 @@ export interface DayRecord {
   dateDimension: "receive";
   timeZone: string;
   fields: string[];
+  /** Only for a filtered pull: the rows are those where each field equals its value. */
+  filters?: Record<string, string>;
   rows: number;
   parquetBytes: number;
   /** The export the day came from: its days, rows and CSV size. */
@@ -74,6 +92,8 @@ export interface SyncOptions {
 
 export interface TableSummary {
   table: LogsTable;
+  /** Where its files went, under the app's folder: tableFolder. */
+  folder: string;
   exports: number;
   downloaded: number;
   /** Downloaded days that will be downloaded again: not over long enough, or shards missing. */
@@ -131,16 +151,16 @@ export async function sync(options: SyncOptions): Promise<TableSummary[]> {
   const converter = options.converter ?? duckdbConverter();
   // Newest first: the most recent days are the ones a question is most likely about.
   const dates = days(options.since, options.until).reverse();
-  const summaries = new Map<LogsTable, TableSummary>();
+  const summaries = new Map<TableSpec, TableSummary>();
   const tasks: Array<{ spec: TableSpec; days: string[] }> = [];
 
   try {
     for (const spec of options.tables) {
       const summary: TableSummary = {
-        table: spec.table, exports: 0, downloaded: 0, partial: 0, skipped: 0, rows: 0, csvBytes: 0, parquetBytes: 0,
+        table: spec.table, folder: tableFolder(spec), exports: 0, downloaded: 0, partial: 0, skipped: 0, rows: 0, csvBytes: 0, parquetBytes: 0,
       };
-      summaries.set(spec.table, summary);
-      await mkdir(join(options.dir, spec.table), { recursive: true });
+      summaries.set(spec, summary);
+      await mkdir(join(options.dir, tableFolder(spec)), { recursive: true });
       const missing: string[] = [];
       for (const date of dates) {
         if (!options.refresh && (await isFinal(options.dir, spec, date))) summary.skipped++;
@@ -151,7 +171,7 @@ export async function sync(options: SyncOptions): Promise<TableSummary[]> {
 
     await pool(tasks, options.parallel ?? 3, async ({ spec, days: run }, signal) => {
       const records = await fetchChunk(options, converter, spec, run, now, log, signal);
-      const summary = summaries.get(spec.table)!;
+      const summary = summaries.get(spec)!;
       summary.exports++;
       summary.csvBytes += records[0].export.csvBytes;
       for (const record of records) {
@@ -168,7 +188,7 @@ export async function sync(options: SyncOptions): Promise<TableSummary[]> {
 }
 
 async function isFinal(dir: string, spec: TableSpec, date: string): Promise<boolean> {
-  const base = join(dir, spec.table, date);
+  const base = join(dir, tableFolder(spec), date);
   try {
     const record = JSON.parse(await readFile(`${base}.json`, "utf8")) as DayRecord;
     await stat(`${base}.parquet`);
@@ -199,7 +219,7 @@ async function fetchChunk(
   const maxAgeSeconds = settled(last)
     ? Math.min(MAX_MAX_AGE_S, Math.max(MIN_MAX_AGE_S, Math.floor((requestedAt - settledAt(last)) / 1000)))
     : MIN_MAX_AGE_S;
-  const label = first === last ? `${spec.table} ${first}` : `${spec.table} ${first} to ${last}`;
+  const label = first === last ? `${tableFolder(spec)} ${first}` : `${tableFolder(spec)} ${first} to ${last}`;
   let reported = 0;
   const onWait = (wait: ExportWait) => {
     if (wait.reason === "retrying") {
@@ -220,13 +240,14 @@ async function fetchChunk(
       until: `${last} 23:59:59`,
       fields: spec.fields,
       dateDimension: "receive",
+      filters: spec.filters,
       maxAgeSeconds,
     },
     { signal, onWait },
   );
 
   // Download and split next to the final files, so a broken run never leaves a file that looks done.
-  const folder = join(options.dir, spec.table);
+  const folder = join(options.dir, tableFolder(spec));
   const csvPart = join(folder, `${last}.csv.part`);
   const parts = run.map((day) => ({ day, path: join(folder, `${day}.parquet.part`) }));
   let csvBytes: number;
@@ -253,6 +274,7 @@ async function fetchChunk(
       dateDimension: "receive",
       timeZone: app.timeZoneName,
       fields: [...spec.fields],
+      ...(spec.filters && Object.keys(spec.filters).length > 0 ? { filters: { ...spec.filters } } : {}),
       rows: counts[i],
       parquetBytes: (await stat(join(folder, `${day}.parquet`))).size,
       export: { since: first, until: last, rows: total, csvBytes },
@@ -294,6 +316,9 @@ async function download(body: ReadableStream<Uint8Array>, path: string): Promise
 /** Runs tasks `size` at a time. The first failure aborts the others and is rethrown. */
 async function pool<T>(items: T[], size: number, run: (item: T, signal: AbortSignal) => Promise<void>): Promise<void> {
   const controller = new AbortController();
+  // Every status check is a fetch on this one signal, and Node's fetch lets go of its listener only when the
+  // request is garbage-collected: an hour of polling collects ~180 and warns of a leak that isn't one.
+  setMaxListeners(0, controller.signal);
   let next = 0;
   let failed: { error: unknown } | undefined;
   const worker = async () => {

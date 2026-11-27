@@ -231,8 +231,14 @@ export class AppMetricaClient {
   async cancelQuery(applicationId: number, requestId: string): Promise<string> {
     const path = `/logs/v1/export/${encodeURIComponent(requestId)}/cancel?${query({ application_id: String(applicationId) })}`;
     const res = await this.request(path, "cancel request", { method: "POST" });
-    const body = (await res.json()) as { message?: string };
-    return body.message ?? "";
+    // The live API answers in plain text ("Request cancellation has been scheduled."), not JSON.
+    const text = (await res.text()).trim();
+    try {
+      const body = JSON.parse(text) as { message?: string };
+      return body.message ?? text;
+    } catch {
+      return text;
+    }
   }
 
   exportUrl(req: ExportRequest): string {
